@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quarry Permit Application</title>
+  <!-- Use relative path from public/ -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Registration Page (hidden by default) -->
+  <div id="registerPage" class="container hidden">
+    <h2>Register</h2>
+    <input type="text" id="regUser" placeholder="Username">
+    <input type="password" id="regPass" placeholder="Password">
+
+    <label for="role">Role:</label>
+    <select id="regRole">
+      <option value="user">Applicant</option>
+      <option value="admin">Admin</option>
+    </select>
+
+    <button onclick="register()">Register</button>
+    <p>Already have an account? <a href="#" onclick="showLogin()">Login</a></p>
+  </div>
+
+  <!-- Login Page (hidden by default) -->
+  <div id="loginPage" class="container hidden">
+    <h2>Login</h2>
+    <input type="text" id="loginUser" placeholder="Username">
+    <input type="password" id="loginPass" placeholder="Password">
+    <button onclick="login()">Login</button>
+    <p>Don’t have an account? <a href="#" onclick="showRegister()">Register</a></p>
+  </div>
+
+  <!-- Menu Page (landing) -->
+  <div id="menuPage" class="container">
+    <div class="hero">
+      <div class="hero__left">
+        <h1 class="hero__title">Welcome!</h1>
+        <p class="hero__text">Applying for a permit? This portal lets you review the requirements checklist and complete your application form digitally. Save drafts, preview your filled form, and download the final file for submission. Start by choosing what you need on the right.</p>
+      </div>
+      <div class="hero__right">
+        <h3 class="hero__subtitle">Get Started</h3>
+        <button class="hero__btn" onclick="showForm()">Checklist</button>
+        <button class="hero__btn" id="appFormBtn" onclick="showApplicationForm()">Application Form</button>
+        <button class="hero__btn" onclick="showTrack()">Track Application</button>
+        <a class="hero__admin" href="/admin/login">Admin Portal</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Track Application Page -->
+  <div id="trackPage" class="container hidden">
+    <div class="hero">
+      <div class="hero__left">
+        <h1 class="hero__title">Track Your Application</h1>
+        <p class="hero__text">Enter your tracking ID to view the current status of your application, including saved fields and uploaded documents. Keep this ID private.</p>
+      </div>
+      <div class="hero__right">
+        <h3 class="hero__subtitle">Check Status</h3>
+        <label for="trackIdInput">Tracking ID</label>
+        <input type="text" id="trackIdInput" placeholder="paste tracking id here">
+        <button class="hero__btn" onclick="checkStatus()">Check</button>
+        <a class="hero__admin" href="#" onclick="showMenu(); return false;">Back to Home</a>
+      </div>
+    </div>
+    <div id="trackResult" class="status-panel"></div>
+  </div>
+
+  <!-- User Checklist Page (PDF Preview) -->
+  <div id="formPageUser" class="container hidden">
+    <h2>Checklist Requirements</h2>
+    <p>Please refer to the official checklist below:</p>
+    <img src="checklist.png" alt="Checklist PDF" style="width:100%; border:1px solid #ccc;">
+    <button onclick="showMenu()">Back to Menu</button>
+  </div>
+
+  <!-- Admin Checklist Page (Interactive) -->
+  <div id="formPageAdmin" class="container hidden">
+    <h2>Quarry Permit Application Checklist (Admin)</h2>
+
+    <div class="progress" id="progressContainer">
+      <div class="progress__bar" id="progressBar"></div>
+      <span class="progress__text" id="progressText">0% complete</span>
+    </div>
+
+    <form id="checklistForm" class="checklist">
+      <label class="checklist-item"><input type="checkbox"> Duly accomplished application form (MGB Form 8-4)</label>
+      <label class="checklist-item"><input type="checkbox"> Location map (NAMRIA topo map, scale 1:50,000)</label>
+      <label class="checklist-item"><input type="checkbox"> Sketch Plan of proposed permit area</label>
+      <label class="checklist-item"><input type="checkbox"> Five-Year Work Program (MGB Form 6-2)</label>
+      <label class="checklist-item"><input type="checkbox"> Certificate of Environmental Management & Community Relations Record</label>
+      <label class="checklist-item"><input type="checkbox"> Environmental Compliance Certificate</label>
+      <label class="checklist-item"><input type="checkbox"> Environmental Protection and Enhancement Program</label>
+      <label class="checklist-item"><input type="checkbox"> Proof of technical competence (CVs, track records, etc.)</label>
+      <label class="checklist-item"><input type="checkbox"> Proof of financial capability (statements, audited reports, ITR, etc.)</label>
+      <label class="checklist-item"><input type="checkbox"> Articles of Incorporation/By-Laws/SEC Certificate</label>
+      <label class="checklist-item"><input type="checkbox"> Secretary’s Certificate authorizing representative</label>
+      <label class="checklist-item"><input type="checkbox"> Other supporting papers as required</label>
+      <label class="checklist-item"><input type="checkbox"> Fees (Filing, Registration, Verification, etc.)</label>
+      <div class="actions">
+        <button type="button" onclick="saveChecklist()">Save Progress</button>
+        <button type="button" class="secondary" onclick="showMenu()">Back to Menu</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Applicant Application Form -->
+  <div id="formApplicationUser" class="container hidden">
+    <h2>Quarry Permit Application Form</h2>
+    <form id="applicationForm">
+      <h3>Page 1</h3>
+      <label>Province/City of (header)</label>
+      <input type="text" id="headerProvinceCity">
+
+      <label>ISAG No.</label>
+      <input type="text" id="isagNo">
+
+      <label>Province/City of (addressee)</label>
+      <input type="text" id="addressedProvinceCity">
+
+      <label>Application Date</label>
+      <input type="date" id="applicationDate">
+
+      <label>Applicant Name</label>
+      <input type="text" id="applicantName">
+
+      <label>Address</label>
+      <textarea id="applicantAddress"></textarea>
+
+      <label>Cubic meters applied for</label>
+      <input type="number" id="cubicMeters" min="0" step="1">
+
+      <label>Approximate Area (hectares)</label>
+      <input type="number" id="approxAreaHectares" min="0" step="0.01">
+
+      <label>Sitio</label>
+      <input type="text" id="sitio">
+
+      <label>Barangay</label>
+      <input type="text" id="barangay">
+
+      <label>Municipality</label>
+      <input type="text" id="municipality">
+
+      <label>Province</label>
+      <input type="text" id="province">
+
+      <label>Island</label>
+      <input type="text" id="island">
+
+      <h3>Page 2</h3>
+      <label>Application Fee Amount (₱)</label>
+      <input type="number" id="feeAmount" min="0" step="0.01">
+
+      <label>Bond Type</label>
+      <select id="bondType">
+        <option value="surety">Surety</option>
+        <option value="cash">Cash</option>
+        <option value="personal">Personal</option>
+      </select>
+
+      <label>Bond Amount (₱)</label>
+      <input type="number" id="bondAmount" min="0" step="0.01">
+
+      <label>Applicant Name (for signature)</label>
+      <input type="text" id="applicantSignatureName">
+
+      <label>TIN</label>
+      <input type="text" id="applicantTin">
+
+      <h3>Page 3 (Acknowledgement)</h3>
+      <label>Province of</label>
+      <input type="text" id="ackProvince">
+
+      <label>City / Municipality of</label>
+      <input type="text" id="ackCityMunicipality">
+
+      <label>Place of Notarization</label>
+      <input type="text" id="notaryPlace">
+
+      <label>Day</label>
+      <input type="number" id="notaryDay" min="1" max="31">
+
+      <label>Month</label>
+      <input type="text" id="notaryMonth" placeholder="e.g., January">
+
+      <label>Year</label>
+      <input type="number" id="notaryYear" min="1900" max="2099">
+
+      <label>CTC No.</label>
+      <input type="text" id="ctcNo">
+
+      <label>CTC Issued At</label>
+      <input type="text" id="ctcIssuedAt">
+
+      <label>CTC Issued Day</label>
+      <input type="number" id="ctcIssuedDay" min="1" max="31">
+
+      <label>CTC Issued Month</label>
+      <input type="text" id="ctcIssuedMonth" placeholder="e.g., January">
+
+      <label>CTC Issued Year</label>
+      <input type="number" id="ctcIssuedYear" min="1900" max="2099">
+
+      <label>Notary Commission Until (Year)</label>
+      <input type="number" id="notaryUntilYear" min="1900" max="2099">
+
+      <label>PTR No.</label>
+      <input type="text" id="ptrNo">
+
+      <label>Doc. No.</label>
+      <input type="text" id="docNo">
+
+      <label>Page No.</label>
+      <input type="text" id="pageNo">
+
+      <label>Book No.</label>
+      <input type="text" id="bookNo">
+
+      <label>Series of</label>
+      <input type="text" id="seriesOf">
+
+      <div class="actions">
+        <button type="button" onclick="showAppActions()">Proceed</button>
+        <button type="button" class="secondary" onclick="refreshPlaceholders()">Refresh Fields</button>
+        <button type="button" class="secondary" onclick="showMenu()">Back to Menu</button>
+      </div>
+
+    </form>
+  </div>
+
+  <!-- Application Actions Page -->
+  <div id="appActionsPage" class="container hidden">
+    <h2>Application Actions</h2>
+    <p style="margin-top:-6px; opacity:0.85;">Save your work, preview the filled form, download a DOCX, or upload supporting files.</p>
+    <div class="actions">
+      <button type="button" onclick="showPreview()">Preview</button>
+      <button type="button" onclick="downloadFilledDoc()">Download Filled .docx</button>
+      <button type="button" class="secondary" onclick="triggerUpload()">Upload Supporting Files</button>
+      <button type="button" class="secondary" onclick="refreshPlaceholders()">Refresh Fields</button>
+    </div>
+    <div class="actions" style="margin-top:12px;">
+      <button type="button" class="secondary" onclick="showApplicationForm()">Back to Form</button>
+      <button type="button" class="secondary" onclick="showMenu()">Back to Menu</button>
+    </div>
+  </div>
+
+  <!-- Floating Preview Modal -->
+  <div id="previewModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+    <div class="modal__backdrop" onclick="closePreview()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <h3 id="previewTitle">Application Preview</h3>
+        <button class="modal__close" onclick="closePreview()" aria-label="Close">×</button>
+      </div>
+      <div id="previewBody" class="modal__body"></div>
+      <div class="modal__footer">
+        <button onclick="closePreview()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tracking ID Warning Modal -->
+  <div id="trackingInfoModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="trackingInfoTitle">
+    <div class="modal__backdrop" onclick="closeTrackingWarning()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <h3 id="trackingInfoTitle">Important</h3>
+        <button class="modal__close" onclick="closeTrackingWarning()" aria-label="Close">×</button>
+      </div>
+      <div class="modal__body">
+        <p style="margin:0 0 8px; font-weight:600;">Don’t forget to copy your Tracking ID.</p>
+        <p style="margin:0 0 10px;">This ID is used to resume your application and track its status. Keep it somewhere safe. You can also find it at the top of the form.</p>
+        <div class="tid-row"><span>Tracking ID:</span> <code id="tidInModal"></code> <button type="button" class="tid-copy" onclick="copyTrackingId()">📋 Copy</button></div>
+      </div>
+      <div class="modal__footer">
+        <button onclick="closeTrackingWarning()">I Understand</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden container for PDF export -->
+  <div id="pdfPreview" style="position:absolute; left:-9999px; top:0;"></div>
+
+  <!-- PDF Generator Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- DOCX renderer (fallback preview when PDF is unavailable) -->
+  <script src="https://unpkg.com/docx-preview@0.3.4/dist/docx-preview.min.js"></script>
+  <!-- Your script -->
+  <script src="script.js"></script>
+</body>
+</html>

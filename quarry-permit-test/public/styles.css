@@ -1,0 +1,307 @@
+/* styles.css */
+* { 
+  box-sizing: border-box; 
+}
+
+html, body {
+  min-height: 100vh;
+}
+
+body { 
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+  /* Opaque landing background */
+  background-color: #0f172a; /* slate-900 base */
+  background-image:
+    radial-gradient(800px 400px at 10% 10%, rgba(255,255,255,0.06), transparent 60%),
+    radial-gradient(600px 300px at 90% 20%, rgba(255,255,255,0.05), transparent 60%),
+    linear-gradient(120deg, #0ea5e9 0%, #7c3aed 100%);
+  background-attachment: fixed;
+  background-blend-mode: overlay;
+  margin: 0; 
+  padding: 40px; 
+  position: relative; /* establish stacking context above the glossy overlay */
+  z-index: 0;
+}
+
+/* Glossy blur overlay across the whole page */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  /* subtle glossy tint */
+  background:
+    radial-gradient(1200px 600px at 20% 0%, rgba(255,255,255,0.10), transparent 60%),
+    radial-gradient(1000px 500px at 80% 10%, rgba(255,255,255,0.08), transparent 60%),
+    rgba(255,255,255,0.06);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hidden { 
+  display: none; 
+}
+
+.container { 
+  max-width: 720px; 
+  margin: 0 auto; 
+  background: #ffffff; 
+  padding: 24px; 
+  border: 1px solid #e5e7eb; 
+  border-radius: 12px; 
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04); 
+  margin-bottom: 20px; 
+  position: relative; /* ensure content sits above the background overlay */
+  z-index: 1;
+}
+
+/* Auth windows: more opaque card on landing */
+#registerPage.container,
+#loginPage.container {
+  max-width: 420px;
+  /* Slightly transparent glass */
+  background: rgba(255,255,255,0.78);
+  border: 1px solid rgba(255,255,255,0.55);
+  box-shadow: 0 20px 50px rgba(2, 6, 23, 0.45);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+#registerPage h2,
+#loginPage h2 {
+  text-align: center;
+}
+
+/* Hero card on landing */
+.hero {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.22);
+  box-shadow: 0 30px 80px rgba(2,6,23,0.55);
+  background: linear-gradient(135deg, #0b1025 0%, #121936 40%, #1b2450 100%);
+  position: relative;
+}
+
+.hero::before,
+.hero::after{
+  content: "";
+  position: absolute;
+  filter: blur(30px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+.hero::before{ width: 380px; height: 380px; left: -120px; top:-80px; background: radial-gradient(closest-side, #8b5cf6, transparent 70%); }
+.hero::after { width: 420px; height: 420px; right: -140px; bottom:-120px; background: radial-gradient(closest-side, #0ea5e9, transparent 70%); }
+
+.hero__left{
+  padding: 38px 34px;
+  color: #e5e7eb;
+  background:
+    radial-gradient(600px 280px at 10% 10%, rgba(255,255,255,0.06), transparent 60%),
+    linear-gradient(135deg, rgba(124,58,237,0.22), rgba(14,165,233,0.10));
+}
+.hero__title{ font-size: 36px; line-height: 1.1; margin: 0 0 10px; color:#f8fafc; }
+.hero__text{ font-size: 15px; line-height: 1.6; max-width: 52ch; opacity: 0.9; }
+
+.hero__right{
+  background: rgba(255,255,255,0.98);
+  padding: 28px 24px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.hero__subtitle{ margin: 0 0 8px; color:#0f172a; }
+.hero__btn{ 
+  display:block; width:100%; padding:12px 14px; 
+  background: linear-gradient(135deg, #0ea5e9, #7c3aed);
+  color:#fff; border: none; border-radius: 10px;
+  font-weight: 700; cursor: pointer;
+  box-shadow: 0 8px 20px rgba(14,165,233,0.25);
+}
+.hero__btn:hover{ filter: brightness(1.05); }
+.hero__admin{ 
+  margin-top: 10px; display:block; text-align:center; 
+  padding:10px 12px; border-radius:10px; text-decoration: none;
+  border: 1px solid #e5e7eb; color:#0f172a; background:#fff;
+}
+.hero__admin:hover{ background:#f3f4f6; }
+
+/* Tracking status */
+.status-panel { margin-top: 18px; background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+.status-grid { display:grid; grid-template-columns: 1fr 2fr; gap:10px 16px; }
+.status-grid .label { font-weight:600; color:#111827; }
+.status-grid .value { font-weight:700; color:#111827; }
+.note-box { background:#fffbeb; border:1px solid #fde68a; color:#78350f; padding:10px 12px; border-radius:10px; margin-top:10px; }
+.badge { display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; font-weight:700; }
+.badge.ok { background:#dcfce7; color:#166534; }
+.badge.warn { background:#fee2e2; color:#991b1b; }
+
+/* Floating modal preview */
+.modal.hidden { display: none; }
+.modal { position: fixed; inset: 0; z-index: 50; }
+.modal__backdrop { position: absolute; inset: 0; background: rgba(2,6,23,0.55); backdrop-filter: blur(4px); }
+.modal__content { position: relative; z-index: 1; max-width: 900px; width: 92%; margin: 5vh auto; background: rgba(255,255,255,0.98); border-radius: 12px; box-shadow: 0 25px 60px rgba(2,6,23,0.45); border: 1px solid rgba(255,255,255,0.6); }
+.modal__header { display:flex; align-items:center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e5e7eb; }
+.modal__body { padding: 18px; max-height: 70vh; overflow:auto; }
+.modal__footer { padding: 12px 18px; border-top: 1px solid #e5e7eb; display:flex; justify-content: flex-end; gap: 10px; }
+.modal__close { background: transparent; color:#111827; border: none; font-size: 22px; line-height: 1; cursor: pointer; padding: 4px 8px; }
+
+/* Preview grid */
+.preview-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 10px 16px; }
+.preview-grid .label { color:#111827; font-weight: 600; }
+.preview-grid .value { color:#111827; font-weight: 700; white-space: pre-wrap; }
+
+/* Tracking ID row */
+.tid-row { display:flex; align-items:center; gap:8px; font-size:13px; margin: 6px 0 12px; }
+.tid-row code { background:#f3f4f6; padding:2px 6px; border-radius:6px; font-weight:700; }
+.tid-copy { border:1px solid #e5e7eb; background:#fff; color:#111827; border-radius:8px; padding:6px 8px; cursor:pointer; }
+.tid-copy:hover { background:#f9fafb; }
+
+.container h2 { 
+  margin-top: 0; 
+}
+
+/* Inputs & buttons */
+input[type="text"], 
+input[type="password"], 
+input[type="number"],
+input[type="date"],
+select, 
+button, 
+textarea { 
+  width: 100%; 
+  padding: 10px; 
+  margin: 8px 0; 
+  font-weight: 700; /* make input text bold */
+}
+
+textarea { 
+  min-height: 60px; 
+}
+
+button { 
+  cursor: pointer; 
+  border: 1px solid #e5e7eb; 
+  background: #111827; 
+  color: #fff; 
+  border-radius: 10px; 
+  transition: background 0.2s ease; 
+}
+
+button:hover {
+  background: #374151;
+}
+
+button.secondary { 
+  background: #fff; 
+  color: #111827; 
+}
+
+button.secondary:hover {
+  background: #f3f4f6;
+}
+
+.actions { 
+  display: flex; 
+  flex-wrap: wrap;
+  gap: 12px; 
+  margin-top: 12px; 
+}
+
+.actions button {
+  flex: 1;
+  min-width: 120px;
+}
+
+/* Checklist layout */
+.checklist { 
+  margin-top: 8px; 
+}
+
+.checklist-item { 
+  display: flex; 
+  align-items: flex-start; 
+  gap: 10px; 
+  margin: 10px 0; 
+  line-height: 1.35; 
+}
+
+.checklist input[type="checkbox"] { 
+  width: auto; 
+  margin: 0; 
+  margin-top: 3px; 
+}
+
+/* Progress bar */
+.progress { 
+  position: relative; 
+  width: 100%; 
+  height: 18px; 
+  background: #edf2f7; 
+  border-radius: 999px; 
+  overflow: hidden; 
+  margin: 8px 0 18px; 
+}
+
+.progress__bar { 
+  position: absolute; 
+  left: 0; 
+  top: 0; 
+  height: 100%; 
+  width: 0%; 
+  background: #16a34a; 
+  transition: width 200ms ease-in-out; 
+}
+
+.progress__text { 
+  position: absolute; 
+  left: 50%; 
+  top: 50%; 
+  transform: translate(-50%, -50%); 
+  font-size: 12px; 
+  font-weight: 600; 
+  color: #111827; 
+}
+
+/* PDF Export Styles */
+#pdfPreview {
+  font-family: "Times New Roman", serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #000;
+  padding: 20px;
+  max-width: 700px;
+  margin: auto;
+}
+
+#pdfPreview h2 {
+  text-align: center;
+  margin-bottom: 20px;
+  text-transform: uppercase;
+}
+
+#pdfPreview p {
+  text-align: justify;
+  margin: 6px 0;
+}
+
+#pdfPreview strong {
+  font-weight: bold;
+}
+
+/* Signature area */
+#pdfPreview .signature {
+  margin-top: 40px;
+  text-align: right;
+}
+
+#pdfPreview .signature-line {
+  margin-top: 60px;
+  border-top: 1px solid #000;
+  width: 200px;
+  float: right;
+  text-align: center;
+  font-size: 12px;
+}

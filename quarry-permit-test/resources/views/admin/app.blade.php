@@ -36,6 +36,8 @@
                     <div><input type="checkbox" name="files_ok" {{ ($adminStatus['checks']['files_ok'] ?? false) ? 'checked' : '' }}> Required documents complete</div>
                     <div class="label">References</div>
                     <div><input type="checkbox" name="references_ok" {{ ($adminStatus['checks']['references_ok'] ?? false) ? 'checked' : '' }}> References validated</div>
+                    <div class="label">Permit Available</div>
+                    <div><input type="checkbox" name="permit_available" {{ ($adminStatus['permit_available'] ?? false) ? 'checked' : '' }}> Final permit ready for applicant</div>
                 </div>
 
                 <h4>Sign-offs</h4>
@@ -79,15 +81,87 @@
         </div>
 
         <div class="status-panel" style="margin-top:16px;">
-            <h3 style="margin-top:0;">Uploaded Files</h3>
+            <h3 style="margin-top:0;">Admin Provided Files</h3>
+            <div style="margin:8px 0;" id="adminUploadBar">
+                <button type="button" onclick="adminTriggerRefUpload()">Upload Files for Applicant</button>
+                <button type="button" onclick="adminDownloadDoc()">Download Filled .docx</button>
+                <button type="button" onclick="adminTriggerPermit()">Upload Final Permit (.docx)</button>
+            </div>
+            <ul>
+                @forelse(($admin_files ?? []) as $f)
+                    <li><a href="{{ $f['url'] }}" target="_blank">{{ $f['name'] }}</a> ({{ round(($f['size'] ?? 0)/1024) }} KB)</li>
+                @empty
+                    <li>No admin files yet.</li>
+                @endforelse
+            </ul>
+        </div>
+
+        <div class="status-panel" style="margin-top:16px;">
+            <h3 style="margin-top:0;">Applicant Uploaded Files</h3>
             <ul>
                 @forelse($files as $f)
                     <li><a href="{{ $f['url'] }}" target="_blank">{{ $f['name'] }}</a> ({{ round(($f['size'] ?? 0)/1024) }} KB)</li>
                 @empty
-                    <li>No files uploaded.</li>
+                    <li>No applicant files.</li>
                 @endforelse
             </ul>
         </div>
     </div>
+    <script>
+      function adminTriggerRefUpload(){
+        let input = document.getElementById('adminRefUploadFiles');
+        if(!input){
+          input = document.createElement('input');
+          input.type = 'file'; input.id='adminRefUploadFiles'; input.multiple = true; input.style.display='none';
+          input.addEventListener('change', () => adminUploadRefFiles(input.files));
+          document.getElementById('adminUploadBar').appendChild(input);
+        }
+        input.value=''; input.click();
+      }
+      async function adminUploadRefFiles(fileList){
+        const files = fileList || (document.getElementById('adminRefUploadFiles')?.files || []);
+        if(!files || files.length===0){ alert('Select files first'); return; }
+        const fd = new FormData();
+        fd.append('tracking_id', @json($tracking_id));
+        Array.from(files).forEach(f => fd.append('files[]', f));
+        const res = await fetch('/api/application/admin-files/upload', { method:'POST', body: fd });
+        if(!res.ok){ alert('Upload failed'); return; }
+        location.reload();
+      }
+      async function adminDownloadDoc(){
+        const data = @json($form ?? []);
+        if(!data || Object.keys(data).length===0){ alert('No form data to generate.'); return; }
+        const res = await fetch('/api/application/generate-doc', {
+          method:'POST', headers:{ 'Content-Type':'application/json', 'Accept':'application/octet-stream' }, body: JSON.stringify(data)
+        });
+        if(!res.ok){ alert('Failed to generate document'); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='application-{{ $tracking_id }}.docx'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      }
+
+      function adminTriggerPermit(){
+        let input = document.getElementById('adminPermitFile');
+        if(!input){
+          input = document.createElement('input');
+          input.type='file'; input.id='adminPermitFile'; input.style.display='none';
+          input.addEventListener('change', () => adminUploadPermit(input.files?.[0]));
+          document.getElementById('adminUploadBar').appendChild(input);
+        }
+        input.value=''; input.click();
+      }
+      async function adminUploadPermit(file){
+        const f = file || (document.getElementById('adminPermitFile')?.files?.[0]);
+        if(!f){ alert('Select a file'); return; }
+        const fd = new FormData();
+        fd.append('tracking_id', @json($tracking_id));
+        fd.append('permit', f);
+        const res = await fetch('/api/application/permit/upload', { method:'POST', body: fd });
+        const ok = res.ok; let msg = 'Uploaded';
+        try{ const j = await res.json(); if(j?.message) msg=j.message; }catch(_){ }
+        if(!ok){ alert(msg || 'Upload failed'); return; }
+        // Auto-refresh to reflect 'Permit Available' checkbox and status
+        location.reload();
+      }
+    </script>
 </body>
 </html>

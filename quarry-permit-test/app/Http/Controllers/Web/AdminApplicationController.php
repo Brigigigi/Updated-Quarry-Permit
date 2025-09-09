@@ -53,9 +53,11 @@ class AdminApplicationController extends Controller
                 $formPath = $full.DIRECTORY_SEPARATOR.'form.json';
 
                 $createdAt = null;
+                $isSubmitted = false;
                 if (file_exists($metaPath)) {
                     $meta = json_decode(@file_get_contents($metaPath), true) ?: [];
                     $createdAt = $meta['created_at'] ?? null;
+                    $isSubmitted = (bool)($meta['submitted'] ?? false) || !empty($meta['submitted_at'] ?? null);
                 }
 
                 $fieldsFilled = 0;
@@ -76,11 +78,21 @@ class AdminApplicationController extends Controller
                     }
                 }
 
+                // only show submitted applications
+                if (!$isSubmitted) continue;
+
+                // Try to read applicant name from saved form
+                $applicantName = '';
+                if (is_array($form)) {
+                    $applicantName = trim((string)($form['applicantName'] ?? $form['applicant_signature_name'] ?? $form['applicantSignatureName'] ?? ''));
+                }
+
                 $items[] = [
                     'tracking_id' => $trackingId,
                     'created_at' => $createdAt,
                     'fields_filled' => $fieldsFilled,
                     'files_uploaded' => $filesCount,
+                    'applicant_name' => $applicantName,
                 ];
             }
         }
@@ -125,19 +137,43 @@ class AdminApplicationController extends Controller
         $percent = (int) round(($filled / $expected) * 100);
         $status = $percent >= 100 ? 'Complete' : ($percent >= 60 ? 'In Progress' : 'Started');
 
-        // Files
-        $filesDir = storage_path('app/application_uploads/'.$safe);
+        // Applicant Files (support both public disk path and legacy path)
         $files = [];
-        if (is_dir($filesDir)) {
+        $seen = [];
+        $dirs = [
+            storage_path('app/public/application_uploads/'.$safe),
+            storage_path('app/application_uploads/'.$safe), // legacy
+        ];
+        foreach ($dirs as $filesDir) {
+            if (!is_dir($filesDir)) continue;
             foreach (scandir($filesDir) as $f) {
                 if ($f==='.'||$f==='..') continue;
                 $full = $filesDir.DIRECTORY_SEPARATOR.$f;
-                if (is_file($full)) {
+                if (is_file($full) && !isset($seen[$f])) {
                     $rel = 'application_uploads/'.$safe.'/'.$f;
                     $files[] = [
                         'name' => $f,
                         'size' => filesize($full),
-                        'url' => url('/storage/'.str_replace('public/','',$rel))
+                        'url' => url('/storage/'.$rel)
+                    ];
+                    $seen[$f] = true;
+                }
+            }
+        }
+
+        // Admin-provided reference files (public disk)
+        $adminFiles = [];
+        $adminDir = storage_path('app/public/admin_uploads/'.$safe);
+        if (is_dir($adminDir)) {
+            foreach (scandir($adminDir) as $f) {
+                if ($f==='.'||$f==='..') continue;
+                $full = $adminDir.DIRECTORY_SEPARATOR.$f;
+                if (is_file($full)) {
+                    $rel = 'admin_uploads/'.$safe.'/'.$f;
+                    $adminFiles[] = [
+                        'name' => $f,
+                        'size' => filesize($full),
+                        'url' => url('/storage/'.$rel)
                     ];
                 }
             }
@@ -152,6 +188,7 @@ class AdminApplicationController extends Controller
                 'files_ok' => false,
                 'references_ok' => false,
             ],
+            'permit_available' => false,
             'signoffs' => [
                 'chair' => ['signed'=>false,'name'=>'','date'=>null],
                 'secretary' => ['signed'=>false,'name'=>'','date'=>null],
@@ -181,6 +218,7 @@ class AdminApplicationController extends Controller
             'percent' => $autoPercent,
             'status' => $status,
             'files' => $files,
+            'admin_files' => $adminFiles,
             'adminStatus' => $adminStatus,
         ]);
     }
@@ -230,6 +268,7 @@ class AdminApplicationController extends Controller
             'progress' => $autoPercent,
             'checks' => $checks,
             'signoffs' => $signoffs,
+            'permit_available' => (bool) $request->boolean('permit_available'),
             'note' => (string) $request->input('note', ($current['note'] ?? '')),
             'updated_at' => now()->toISOString(),
         ]);

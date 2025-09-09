@@ -45,7 +45,6 @@
         <button class="hero__btn" onclick="showForm()">Checklist</button>
         <button class="hero__btn" id="appFormBtn" onclick="showApplicationForm()">Application Form</button>
         <button class="hero__btn" onclick="showTrack()">Track Application</button>
-        <a class="hero__admin" href="/admin/login">Admin Portal</a>
       </div>
     </div>
   </div>
@@ -62,6 +61,7 @@
         <label for="trackIdInput">Tracking ID</label>
         <input type="text" id="trackIdInput" placeholder="paste tracking id here">
         <button class="hero__btn" onclick="checkStatus()">Check</button>
+        <button class="hero__btn" id="downloadPermitBtn" onclick="downloadTrackedDoc()">Download Permit</button>
         <a class="hero__admin" href="#" onclick="showMenu(); return false;">Back to Home</a>
       </div>
     </div>
@@ -145,7 +145,7 @@
       <input type="text" id="municipality">
 
       <label>Province</label>
-      <input type="text" id="province">
+T      <input type="text" id="province">
 
       <label>Island</label>
       <input type="text" id="island">
@@ -237,13 +237,11 @@
     <p style="margin-top:-6px; opacity:0.85;">Save your work, preview the filled form, download a DOCX, or upload supporting files.</p>
     <div class="actions">
       <button type="button" onclick="showPreview()">Preview</button>
-      <button type="button" onclick="downloadFilledDoc()">Download Filled .docx</button>
       <button type="button" class="secondary" onclick="triggerUpload()">Upload Supporting Files</button>
-      <button type="button" class="secondary" onclick="refreshPlaceholders()">Refresh Fields</button>
+      <button type="button" class="secondary" onclick="showApplicationForm()">Back to Form</button>
     </div>
     <div class="actions" style="margin-top:12px;">
-      <button type="button" class="secondary" onclick="showApplicationForm()">Back to Form</button>
-      <button type="button" class="secondary" onclick="showMenu()">Back to Menu</button>
+      <button type="button" onclick="submitApplication()">Submit Application</button>
     </div>
   </div>
 
@@ -253,7 +251,6 @@
     <div class="modal__content">
       <div class="modal__header">
         <h3 id="previewTitle">Application Preview</h3>
-        <button class="modal__close" onclick="closePreview()" aria-label="Close">×</button>
       </div>
       <div id="previewBody" class="modal__body"></div>
       <div class="modal__footer">
@@ -263,17 +260,17 @@
   </div>
 
   <!-- Tracking ID Warning Modal -->
-  <div id="trackingInfoModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="trackingInfoTitle">
+  <div id="trackingInfoModal" class="modal modal--info hidden" role="dialog" aria-modal="true" aria-labelledby="trackingInfoTitle">
     <div class="modal__backdrop" onclick="closeTrackingWarning()"></div>
     <div class="modal__content">
       <div class="modal__header">
+        <span class="modal__icon" aria-hidden="true"></span>
         <h3 id="trackingInfoTitle">Important</h3>
-        <button class="modal__close" onclick="closeTrackingWarning()" aria-label="Close">×</button>
       </div>
       <div class="modal__body">
         <p style="margin:0 0 8px; font-weight:600;">Don’t forget to copy your Tracking ID.</p>
         <p style="margin:0 0 10px;">This ID is used to resume your application and track its status. Keep it somewhere safe. You can also find it at the top of the form.</p>
-        <div class="tid-row"><span>Tracking ID:</span> <code id="tidInModal"></code> <button type="button" class="tid-copy" onclick="copyTrackingId()">📋 Copy</button></div>
+        <div class="tid-row"><span>Tracking ID:</span> <code id="tidInModal"></code> <button type="button" class="tid-copy" onclick="copyTrackingId()" aria-label="Copy">📋</button></div>
       </div>
       <div class="modal__footer">
         <button onclick="closeTrackingWarning()">I Understand</button>
@@ -281,8 +278,47 @@
     </div>
   </div>
 
+  <!-- Submission Thank You Modal -->
+  <div id="submissionModal" class="modal modal--success hidden" role="dialog" aria-modal="true" aria-labelledby="submissionTitle">
+    <div class="modal__backdrop" onclick="closeSubmissionModal()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <span class="modal__icon" aria-hidden="true"></span>
+        <h3 id="submissionTitle">Thank you for your application!</h3>
+      </div>
+      <div class="modal__body">
+        <p>Your application has been submitted successfully.</p>
+        <p>You can track the progress of your application using the Tracking ID below.</p>
+        <div class="tid-row"><span>Tracking ID:</span> <code id="submittedTidDisplay"></code> <button type="button" class="tid-copy" onclick="copySubmittedTrackingId()" aria-label="Copy">📋</button></div>
+      </div>
+      <div class="modal__footer">
+        <button onclick="closeSubmissionModal()">Okay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Validation Modal -->
+  <div id="validationModal" class="modal modal--warning hidden" role="dialog" aria-modal="true" aria-labelledby="validationTitle">
+    <div class="modal__backdrop" onclick="closeValidationModal()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <span class="modal__icon" aria-hidden="true"></span>
+        <h3 id="validationTitle">Missing Required Fields</h3>
+      </div>
+      <div class="modal__body">
+        <p>Please complete the following fields before proceeding:</p>
+        <ul id="validationList"></ul>
+      </div>
+      <div class="modal__footer">
+        <button onclick="closeValidationModal()">Got it</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Hidden container for PDF export -->
   <div id="pdfPreview" style="position:absolute; left:-9999px; top:0;"></div>
+  <!-- Toasts container -->
+  <div id="toastHost" class="toast-host"></div>
 
   <!-- PDF Generator Library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>

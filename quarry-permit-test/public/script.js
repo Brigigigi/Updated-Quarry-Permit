@@ -17,6 +17,61 @@ const DEFAULT_APP_FIELDS = [
     'docNo','pageNo','bookNo','seriesOf'
 ];
 
+// Toasts (fallback to alert if host missing)
+function notify(message, type = 'info', timeout = 3000) {
+const host = document.getElementById('toastHost');
+if (!host) { alert(message); return; }
+const el = document.createElement('div');
+const map = { success:'toast--success', info:'toast--info', warning:'toast--warning', error:'toast--error' };
+el.className = 'toast ' + (map[type] || 'toast--info');
+const btn = document.createElement('button'); btn.className='toast__close'; btn.textContent='×'; btn.onclick=()=> el.remove();
+const p = document.createElement('div'); p.textContent = message;
+el.appendChild(btn); el.appendChild(p); host.appendChild(el);
+if (timeout > 0) setTimeout(()=> el.remove(), timeout);
+}
+
+// Minimal set of necessary fields (whitelist)
+const NECESSARY_FIELDS = [
+    'isagNo','applicationDate','applicantName','applicantAddress',
+    'barangay','municipality','province','sitio','island',
+    'cubicMeters','approxAreaHectares',
+    'feeAmount','bondType','bondAmount','applicantSignatureName','applicantTin',
+    'ackProvince','ackCityMunicipality','notaryPlace','notaryDay','notaryMonth','notaryYear',
+    'ctcNo','ctcIssuedAt','ctcIssuedDay','ctcIssuedMonth','ctcIssuedYear','notaryUntilYear','ptrNo',
+    'docNo','pageNo','bookNo','seriesOf'
+];
+
+// ------------------- Validation helpers (global) -------------------
+function getRequiredFieldIds(){
+    return (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length)
+        ? window.APP_PLACEHOLDERS
+        : DEFAULT_APP_FIELDS;
+}
+
+function humanizeKey(k){
+    const spaced = k.replace(/_/g,' ').replace(/([A-Z])/g,' $1').trim();
+    return spaced.split(' ').map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+
+function validateApplicationCompleteness(){
+    const missing = [];
+    let firstId = null;
+    getRequiredFieldIds().forEach(id => {
+        const el = document.getElementById(id);
+        const val = (el && typeof el.value === 'string') ? el.value.trim() : '';
+        if (!val) {
+            missing.push(humanizeKey(id));
+            if (el) {
+                el.classList.add('input-error');
+                if (!firstId) firstId = id;
+            }
+        } else if (el) {
+            el.classList.remove('input-error');
+        }
+    });
+    return { ok: missing.length === 0, missing, firstId };
+}
+
 // ------------------- PAGE NAVIGATION -------------------
 function togglePages(showId) {
     const pages = ['registerPage','loginPage','menuPage','formPageUser','formPageAdmin','formApplicationUser','trackPage','appActionsPage'];
@@ -49,13 +104,103 @@ function showApplicationForm() {
 }
 
 function showAppActions(){
+    // Validate completeness before proceeding
+    const check = validateApplicationCompleteness();
+    if (!check.ok) {
+        // Show modal with missing list instead of alert
+        if (typeof showValidationModal === 'function') {
+            showValidationModal(check.missing);
+        } else {
+            alert(`Please complete all fields before proceeding. Missing: ${check.missing.slice(0,3).join(', ')}${check.missing.length>3?'...':''}`);
+        }
+        const first = document.getElementById(check.firstId);
+        if (first) first.focus();
+        return;
+    }
     // Auto-save before moving to actions page
     saveApplication(true).finally(() => {
         togglePages('appActionsPage');
     });
 }
 
+// Submit: save, show menu, thank-you modal, reset form for next applicant
+async function submitApplication(){
+    // Final validation before submit
+    const check = validateApplicationCompleteness();
+    if(!check.ok){
+        showValidationModal(check.missing);
+        const first = document.getElementById(check.firstId);
+        if (first) first.focus();
+        return;
+    }
+    const submittedTid = sessionStorage.getItem('tracking_id') || '';
+    await saveApplication(true);
+    try{
+        await safeFetch('/api/application/submit', {
+            method:'POST',
+            headers:{ 'Content-Type':'application/json' },
+            body: JSON.stringify({ tracking_id: submittedTid })
+        });
+    }catch(_){ /* ignore, client fallback still shows modal */ }
+    // Navigate to landing
+    togglePages('menuPage');
+    // Show submission modal with the tracking id
+    window.LAST_SUBMITTED_TID = submittedTid;
+    const el = document.getElementById('submittedTidDisplay');
+    if (el) el.textContent = submittedTid;
+    const modal = document.getElementById('submissionModal');
+    if (modal) modal.classList.remove('hidden');
+    // Clear form fields and tracking so next applicant starts fresh
+    clearApplicationForm();
+    sessionStorage.removeItem('tracking_id');
+}
+
+function closeSubmissionModal(){
+    const modal = document.getElementById('submissionModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function copySubmittedTrackingId(){
+    const tid = window.LAST_SUBMITTED_TID || '';
+    if(!tid){ notify('Tracking ID not found','error'); return; }
+    navigator.clipboard.writeText(tid).then(()=>{ notify('Tracking ID copied'); }).catch(()=>{ notify('Copy failed','error'); });
+}
+
+function clearApplicationForm(){
+    const ids = (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length) ? window.APP_PLACEHOLDERS : DEFAULT_APP_FIELDS;
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+}
+
 function showTrack(){
+    // helper functions for completeness (injected here to avoid load-order issues)
+    if (typeof window.validateApplicationCompleteness !== 'function') {
+        window.getRequiredFieldIds = function(){
+            return (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length)
+                ? window.APP_PLACEHOLDERS
+                : DEFAULT_APP_FIELDS;
+        };
+        window.humanizeKey = function(k){
+            return k.replace(/([A-Z])/g,' $1').replace(/^./, s=>s.toUpperCase()).replace(/_/g,' ');
+        };
+        window.validateApplicationCompleteness = function(){
+            const missing = [];
+            let firstId = null;
+            window.getRequiredFieldIds().forEach(id => {
+                const el = document.getElementById(id);
+                const val = (el && typeof el.value === 'string') ? el.value.trim() : '';
+                if (!val) {
+                    missing.push(window.humanizeKey(id));
+                    if (el) {
+                        el.classList.add('input-error');
+                        if (!firstId) firstId = id;
+                    }
+                } else if (el) {
+                    el.classList.remove('input-error');
+                }
+            });
+            return { ok: missing.length === 0, missing, firstId };
+        };
+    }
     togglePages('trackPage');
     const tid = sessionStorage.getItem('tracking_id') || '';
     const input = document.getElementById('trackIdInput');
@@ -190,7 +335,7 @@ async function saveApplication() {
         body: JSON.stringify({ tracking_id, ...data })
     });
 
-    alert('Application form saved as draft!');
+    notify('Draft saved');
 }
 
 async function loadApplication() {
@@ -305,20 +450,56 @@ async function downloadFilledDoc() {
     }
 }
 
+// Download final permit uploaded by admin
+async function downloadTrackedDoc(){
+    const input = document.getElementById('trackIdInput');
+    const tracking_id = (input?.value || '').trim();
+    if(!tracking_id){ alert('Enter a tracking ID first'); return; }
+    try{
+        const res = await fetch(`${API_BASE}/api/application/permit/download?tracking_id=${encodeURIComponent(tracking_id)}`, {
+            method:'GET', headers: { 'Accept': 'application/octet-stream' }
+        });
+        if(!res.ok){
+            const txt = await res.text();
+            try{ const j = JSON.parse(txt); alert(j.message || 'Permit not available yet'); }
+            catch(_){ alert('Permit not available yet'); }
+            return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `permit-${tracking_id}.docx`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }catch(err){ alert(err.message || 'Download failed'); }
+}
+
+// Validation modal helpers
+function showValidationModal(missing){
+    const ul = document.getElementById('validationList');
+    if (ul) {
+        ul.innerHTML='';
+        missing.forEach(name => { const li=document.createElement('li'); li.textContent=name; ul.appendChild(li); });
+    }
+    const modal = document.getElementById('validationModal');
+    if (modal) modal.classList.remove('hidden');
+}
+function closeValidationModal(){
+    const modal = document.getElementById('validationModal');
+    if (modal) modal.classList.add('hidden');
+}
+
 // ------------------- Dynamic placeholders & form builder -------------------
 async function ensurePlaceholders(force = false) {
     if (!force && Array.isArray(window.APP_PLACEHOLDERS) && window.APP_PLACEHOLDERS.length) return;
     try {
         const res = await safeFetch('/api/application/placeholders');
         let ph = Array.isArray(res.placeholders) ? res.placeholders : [];
-        // Heuristic: if none or only a generic placeholder exists, fall back
-        if (ph.length === 0 || (ph.length === 1 && ph[0].toLowerCase() === 'placeholdername')) {
-            ph = DEFAULT_APP_FIELDS;
-        }
+        // Filter to whitelist to avoid noise
+        ph = ph.filter(k => NECESSARY_FIELDS.includes(k));
+        if (ph.length === 0) ph = NECESSARY_FIELDS;
         window.APP_PLACEHOLDERS = ph;
     } catch(e) {
-        // Fallback to default fields if endpoint not available
-        window.APP_PLACEHOLDERS = DEFAULT_APP_FIELDS;
+        // Fallback to necessary fields if endpoint not available
+        window.APP_PLACEHOLDERS = NECESSARY_FIELDS;
     }
 }
 
@@ -368,6 +549,8 @@ function buildApplicationForm(placeholders) {
         btn.title = 'Copy tracking ID';
         btn.textContent = '📋 Copy';
         btn.addEventListener('click', () => copyTrackingId());
+        // Minimal icon-only copy button
+        btn.textContent = '📋';
         tidBox.appendChild(label);
         tidBox.appendChild(codeSpan);
         tidBox.appendChild(btn);
@@ -393,6 +576,8 @@ function buildApplicationForm(placeholders) {
         const input = document.createElement('input');
         input.type = 'text';
         input.id = key;
+        input.required = true;
+        input.addEventListener('input', () => input.classList.remove('input-error'));
         form.insertBefore(label, actions);
         form.insertBefore(input, actions);
     });
@@ -493,9 +678,9 @@ function triggerUpload(){
 }
 async function uploadFiles(){
     const input = document.getElementById('appFiles');
-    if(!input.files || input.files.length === 0){ alert('Select files first.'); return; }
+    if(!input.files || input.files.length === 0){ notify('Select files first','error'); return; }
     const tracking_id = sessionStorage.getItem('tracking_id') || '';
-    if(!tracking_id){ alert('Tracking ID missing. Please open the Application Form again.'); return; }
+    if(!tracking_id){ notify('Tracking ID missing. Please open the Application Form again','error'); return; }
 
     const fd = new FormData();
     fd.append('tracking_id', tracking_id);
@@ -510,7 +695,8 @@ async function uploadFiles(){
     try { data = text ? JSON.parse(text) : {}; } catch(_) {}
     if(!res.ok){ alert((data && data.message) || 'Upload failed'); return; }
     alert('Uploaded successfully');
-    listFiles();
+    const list = document.getElementById('fileList');
+    if (list) { listFiles(); }
 }
 
 async function listFiles(){
@@ -539,8 +725,13 @@ async function listFiles(){
 async function ensureTrackingId(){
     let tid = sessionStorage.getItem('tracking_id');
     if (tid) return tid;
-    const res = await safeFetch('/api/application/start', { method:'POST' });
-    tid = res.tracking_id;
+    try{
+        const res = await safeFetch('/api/application/start', { method:'POST' });
+        tid = res.tracking_id;
+    }catch(e){
+        // Fallback: generate client-side short code
+        tid = (Math.random().toString(36).slice(2,6) + Math.random().toString(36).slice(2,6)).toUpperCase();
+    }
     sessionStorage.setItem('tracking_id', tid);
     return tid;
 }
@@ -592,9 +783,14 @@ async function checkStatus(){
 
     const res = await safeFetch(`/api/application/status?tracking_id=${encodeURIComponent(tracking_id)}`);
     let files = [];
+    let adminFiles = [];
     try {
         const fr = await safeFetch(`/api/application/files?tracking_id=${encodeURIComponent(tracking_id)}`);
         files = fr.files || [];
+    } catch(_) {}
+    try {
+        const afr = await safeFetch(`/api/application/admin-files?tracking_id=${encodeURIComponent(tracking_id)}`);
+        adminFiles = afr.files || [];
     } catch(_) {}
 
     const panel = document.getElementById('trackResult');
@@ -607,6 +803,18 @@ async function checkStatus(){
         const bar = document.createElement('div'); bar.className='progress__bar'; bar.style.width = `${res.progress}%`;
         const text = document.createElement('span'); text.className='progress__text'; text.textContent = `${res.progress}% complete`;
         progress.appendChild(bar); progress.appendChild(text); panel.appendChild(progress);
+
+        // Toggle permit download availability based on admin-set availability AND 100% progress
+        const dlBtn = document.getElementById('downloadPermitBtn');
+        if (dlBtn) {
+            if ((res.permit_available === true) && (res.progress >= 100)) {
+                dlBtn.disabled = false;
+                dlBtn.style.display = 'inline-block';
+            } else {
+                dlBtn.disabled = true;
+                dlBtn.style.display = 'none';
+            }
+        }
     }
 
     const grid = document.createElement('div');
@@ -624,6 +832,7 @@ async function checkStatus(){
     add('Form', badge1);
     add('Fields Filled', String(res.fields_filled || 0));
     add('Files Uploaded', String(res.files_uploaded || 0));
+    add('Permit', (res.permit_available ? 'Available' : 'Not available'));
 
     panel.appendChild(grid);
 
@@ -634,12 +843,62 @@ async function checkStatus(){
     }
 
     // Files list
+    // Applicant files
     const ul = document.createElement('ul');
     ul.style.marginTop = '12px';
-    files.forEach(f => {
-        const li = document.createElement('li');
-        const a = document.createElement('a'); a.href = f.url || '#'; a.target = '_blank'; a.textContent = `${f.name} (${Math.round((f.size||0)/1024)} KB)`; li.appendChild(a); ul.appendChild(li);
-    });
-    if(files.length===0){ const li=document.createElement('li'); li.textContent='No files uploaded yet.'; ul.appendChild(li); }
+    if (files.length){
+        files.forEach(f => {
+            const li = document.createElement('li');
+            // Applicant files are listed as plain text (no direct access)
+            li.textContent = `${f.name} (${Math.round((f.size||0)/1024)} KB)`;
+            ul.appendChild(li);
+        });
+    } else {
+        const li=document.createElement('li'); li.textContent='No files uploaded yet.'; ul.appendChild(li);
+    }
     panel.appendChild(ul);
+
+    // Admin-provided files list with download links
+    const adminHeader = document.createElement('div'); adminHeader.className='label'; adminHeader.style.marginTop = '10px'; adminHeader.textContent='Admin Files:';
+    panel.appendChild(adminHeader);
+    const ulA = document.createElement('ul');
+    adminFiles.forEach(f => {
+        const li = document.createElement('li');
+        const a = document.createElement('a'); a.href = f.url || '#'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${f.name} (${Math.round((f.size||0)/1024)} KB)`;
+        li.appendChild(a); ulA.appendChild(li);
+    });
+    if(adminFiles.length===0){ const li=document.createElement('li'); li.textContent='No admin files.'; ulA.appendChild(li); }
+    panel.appendChild(ulA);
+}
+
+
+// ------------------- Completeness validation (global) -------------------
+function getRequiredFieldIds(){
+    return (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length)
+        ? window.APP_PLACEHOLDERS
+        : DEFAULT_APP_FIELDS;
+}
+
+function humanizeKey(k){
+    const spaced = k.replace(/_/g,' ').replace(/([A-Z])/g,' $1').trim();
+    return spaced.split(' ').map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+
+function validateApplicationCompleteness(){
+    const missing = [];
+    let firstId = null;
+    getRequiredFieldIds().forEach(id => {
+        const el = document.getElementById(id);
+        const val = (el && typeof el.value === 'string') ? el.value.trim() : '';
+        if (!val) {
+            missing.push(humanizeKey(id));
+            if (el) {
+                el.classList.add('input-error');
+                if (!firstId) firstId = id;
+            }
+        } else if (el) {
+            el.classList.remove('input-error');
+        }
+    });
+    return { ok: missing.length === 0, missing, firstId };
 }

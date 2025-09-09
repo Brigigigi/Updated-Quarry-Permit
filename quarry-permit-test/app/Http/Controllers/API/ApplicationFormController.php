@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use ZipArchive;
+use Illuminate\Support\Facades\Storage;
 
 class ApplicationFormController extends Controller
 {
@@ -24,14 +25,26 @@ class ApplicationFormController extends Controller
         return $this->appDir($trackingId).DIRECTORY_SEPARATOR.'form.json';
     }
 
+    private function appMetaPath($trackingId)
+    {
+        return $this->appDir($trackingId).DIRECTORY_SEPARATOR.'meta.json';
+    }
+
     public function start(Request $request)
     {
-        $id = (string) \Illuminate\Support\Str::uuid();
-        $dir = $this->appDir($id);
+        // Generate a short tracking code (8 upper-case chars), ensure uniqueness
+        do {
+            $id = strtoupper(Str::random(8));
+            $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $id);
+            $dir = storage_path('app/applications/'.$safe);
+        } while (is_dir($dir));
+
+        @mkdir($dir, 0775, true);
         // seed metadata
         @file_put_contents($dir.DIRECTORY_SEPARATOR.'meta.json', json_encode([
             'tracking_id' => $id,
             'created_at' => now()->toISOString(),
+            'submitted' => false,
         ]));
         return response()->json(['tracking_id' => $id]);
     }
@@ -44,6 +57,22 @@ class ApplicationFormController extends Controller
         $data = $request->except(['tracking_id','username']);
         @file_put_contents($this->appJsonPath($trackingId), json_encode($data));
         return response()->json(['message'=>'Application saved', 'tracking_id'=>$trackingId]);
+    }
+
+    // Mark application as submitted (so admin dashboard can list it)
+    public function submit(Request $request)
+    {
+        $trackingId = $request->input('tracking_id');
+        if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
+
+        $metaPath = $this->appMetaPath($trackingId);
+        $meta = file_exists($metaPath) ? (json_decode(@file_get_contents($metaPath), true) ?: []) : [];
+        $meta['tracking_id'] = $trackingId;
+        $meta['submitted'] = true;
+        $meta['submitted_at'] = now()->toISOString();
+        @file_put_contents($metaPath, json_encode($meta));
+
+        return response()->json(['message'=>'Application submitted', 'tracking_id'=>$trackingId]);
     }
 
     public function load(Request $request)
@@ -277,22 +306,31 @@ class ApplicationFormController extends Controller
         $trackingId = $request->input('tracking_id');
         if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
 
-        if(!$request->hasFile('files')){
+        if(!($request->hasFile('files') || $request->hasFile('files.*') || $request->hasFile('file'))){
             return response()->json(['message'=>'No files uploaded'], 400);
         }
 
         $uploaded = [];
-        foreach ((array)$request->file('files') as $file) {
+        $incoming = $request->file('files') ?? $request->file('file');
+        $filesArr = is_array($incoming) ? $incoming : [$incoming];
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $disk = Storage::disk('public');
+        $baseDir = 'application_uploads/'.$safe;
+        if (!$disk->exists($baseDir)) {
+            $disk->makeDirectory($baseDir);
+        }
+        foreach ($filesArr as $file) {
             if (!$file || !$file->isValid()) continue;
-            $directory = 'application_uploads/'.preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
-            $name = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
-            $path = $file->storeAs($directory, $name);
+            $ext = $file->getClientOriginalExtension();
+            $name = time().'_'.uniqid().($ext?('.'.$ext):'');
+            $disk->putFileAs($baseDir, $file, $name);
+            $path = 'public/'.$baseDir.'/'.$name; // virtual full path for compatibility
             $uploaded[] = [
                 'original' => $file->getClientOriginalName(),
                 'path' => $path,
                 'size' => $file->getSize(),
                 'mime' => $file->getClientMimeType(),
-                'url' => url('/storage/'.str_replace('public/','',$path))
+                'url' => url('/storage/'.$baseDir.'/'.$name)
             ];
         }
 
@@ -304,23 +342,114 @@ class ApplicationFormController extends Controller
     {
         $trackingId = $request->query('tracking_id');
         if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
-        $directory = storage_path('app/application_uploads/'.preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId));
-        if (!is_dir($directory)) return response()->json(['files'=>[]]);
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
         $files = [];
-        foreach (scandir($directory) as $f) {
-            if ($f === '.' || $f === '..') continue;
-            $full = $directory.DIRECTORY_SEPARATOR.$f;
-            if (is_file($full)) {
-                $rel = 'application_uploads/'.preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId).'/'.$f;
-                $files[] = [
-                    'name' => $f,
-                    'path' => $rel,
-                    'size' => filesize($full),
-                    'url' => url('/storage/'.str_replace('public/','',$rel))
-                ];
+        // Prefer public disk listing
+        $diskFiles = Storage::disk('public')->files('application_uploads/'.$safe);
+        foreach ($diskFiles as $relPath) {
+            $name = basename($relPath);
+            $full = storage_path('app/public/'.$relPath);
+            $files[] = [
+                'name' => $name,
+                'path' => $relPath,
+                'size' => is_file($full) ? filesize($full) : 0,
+                'url' => url('/storage/'.$relPath)
+            ];
+        }
+        // Legacy path fallback
+        $legacyDir = storage_path('app/application_uploads/'.$safe);
+        if (is_dir($legacyDir)) {
+            foreach (scandir($legacyDir) as $f) {
+                if ($f==='.'||$f==='..') continue;
+                $full = $legacyDir.DIRECTORY_SEPARATOR.$f;
+                if (is_file($full)) {
+                    $rel = 'application_uploads/'.$safe.'/'.$f;
+                    // Avoid duplicates if already in public disk
+                    if (!collect($files)->firstWhere('name', $f)) {
+                        $files[] = [
+                            'name' => $f,
+                            'path' => $rel,
+                            'size' => filesize($full),
+                            'url' => url('/storage/'.$rel)
+                        ];
+                    }
+                }
             }
         }
         return response()->json(['files'=>$files]);
+    }
+
+    // Admin-provided reference files upload
+    public function uploadAdminFiles(Request $request)
+    {
+        $trackingId = $request->input('tracking_id');
+        if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
+        if(!($request->hasFile('files') || $request->hasFile('files.*') || $request->hasFile('file'))){
+            return response()->json(['message'=>'No files uploaded'], 400);
+        }
+
+        $uploaded = [];
+        $incoming = $request->file('files') ?? $request->file('file');
+        $filesArr = is_array($incoming) ? $incoming : [$incoming];
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $disk = Storage::disk('public');
+        $baseDir = 'admin_uploads/'.$safe;
+        if (!$disk->exists($baseDir)) { $disk->makeDirectory($baseDir); }
+        foreach ($filesArr as $file) {
+            if (!$file || !$file->isValid()) continue;
+            $ext = $file->getClientOriginalExtension();
+            $name = time().'_'.uniqid().($ext?('.'.$ext):'');
+            $disk->putFileAs($baseDir, $file, $name);
+            $uploaded[] = [
+                'original' => $file->getClientOriginalName(),
+                'path' => $baseDir.'/'.$name,
+                'size' => $file->getSize(),
+                'mime' => $file->getClientMimeType(),
+                'url' => url('/storage/'.$baseDir.'/'.$name)
+            ];
+        }
+        return response()->json(['message'=>'Files uploaded','files'=>$uploaded]);
+    }
+
+    // List admin-provided reference files
+    public function adminFiles(Request $request)
+    {
+        $trackingId = $request->query('tracking_id');
+        if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $files = [];
+        $diskFiles = Storage::disk('public')->files('admin_uploads/'.$safe);
+        foreach ($diskFiles as $relPath) {
+            $name = basename($relPath);
+            $full = storage_path('app/public/'.$relPath);
+            $files[] = [
+                'name' => $name,
+                'path' => $relPath,
+                'size' => is_file($full) ? filesize($full) : 0,
+                // Prefer API download route to avoid needing the public storage symlink
+                'url' => url('/api/application/admin-files/download?tracking_id='.$safe.'&name='.rawurlencode($name))
+            ];
+        }
+        return response()->json(['files'=>$files]);
+    }
+
+    // Stream admin-provided file securely
+    public function downloadAdminFile(Request $request)
+    {
+        $trackingId = (string) $request->query('tracking_id');
+        $name = (string) $request->query('name');
+        if(!$trackingId || !$name) return response()->json(['message'=>'tracking_id and name are required'], 400);
+        // deny path traversal (avoid regex to prevent delimiter issues)
+        if (str_contains($name, '/') || str_contains($name, '\\')) {
+            return response()->json(['message'=>'Invalid file name'], 400);
+        }
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $rel = 'admin_uploads/'.$safe.'/'.$name;
+        $full = storage_path('app/public/'.$rel);
+        if (!is_file($full)) return response()->json(['message'=>'File not found'], 404);
+        // Sanitize download name for headers to avoid Content-Disposition regex issues
+        $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $name) ?: 'file';
+        return response()->download($full, $safeName);
     }
 
     public function status(Request $request)
@@ -329,16 +458,23 @@ class ApplicationFormController extends Controller
         if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
         $formPath = $this->appJsonPath($trackingId);
         $form = file_exists($formPath) ? json_decode(file_get_contents($formPath), true) : [];
-        $fileDir = storage_path('app/application_uploads/'.preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId));
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        // Count files from both public disk and legacy folder
         $fileCount = 0;
-        if (is_dir($fileDir)) {
-            foreach (scandir($fileDir) as $f) { if ($f!=='.' && $f!=='..' && is_file($fileDir.DIRECTORY_SEPARATOR.$f)) $fileCount++; }
+        $publicFiles = \Illuminate\Support\Facades\Storage::disk('public')->files('application_uploads/'.$safe);
+        $fileCount += is_array($publicFiles) ? count($publicFiles) : 0;
+        $legacyDir = storage_path('app/application_uploads/'.$safe);
+        if (is_dir($legacyDir)) {
+            foreach (scandir($legacyDir) as $f) { if ($f!=='.' && $f!=='..' && is_file($legacyDir.DIRECTORY_SEPARATOR.$f)) $fileCount++; }
         }
         // Load admin-set progress and note
-        $statusPath = storage_path('app/applications/'.preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId).'/status.json');
+        $statusPath = storage_path('app/applications/'.$safe.'/status.json');
         $adminStatus = file_exists($statusPath) ? (json_decode(@file_get_contents($statusPath), true) ?: []) : [];
         $progress = isset($adminStatus['progress']) ? (int)$adminStatus['progress'] : 0;
         $note = isset($adminStatus['note']) ? (string)$adminStatus['note'] : '';
+
+        // Final permit availability is admin-controlled flag in status.json
+        $permitAvailable = (bool)($adminStatus['permit_available'] ?? false);
         return response()->json([
             'tracking_id' => $trackingId,
             'has_form' => !empty($form),
@@ -346,6 +482,59 @@ class ApplicationFormController extends Controller
             'files_uploaded' => $fileCount,
             'progress' => $progress,
             'note' => $note,
+            'permit_available' => $permitAvailable,
         ]);
+    }
+
+    // Admin uploads final permit for applicant to download
+    public function uploadPermit(Request $request)
+    {
+        $trackingId = (string) $request->input('tracking_id');
+        if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
+        if(!$request->hasFile('permit')) return response()->json(['message'=>'permit file required (field name: permit)'], 400);
+
+        $file = $request->file('permit');
+        if(!$file || !$file->isValid()) return response()->json(['message'=>'invalid file'], 400);
+        // Enforce .docx only
+        $ext = strtolower((string)$file->getClientOriginalExtension());
+        if ($ext !== 'docx') return response()->json(['message'=>'Only .docx files are allowed for final permit'], 422);
+
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $disk = Storage::disk('public');
+        $dir = 'permits/'.$safe;
+        if(!$disk->exists($dir)) $disk->makeDirectory($dir);
+        // Remove previous permit(s) to keep single canonical file
+        foreach ($disk->files($dir) as $old) { $disk->delete($old); }
+        $name = 'permit.docx';
+        $disk->putFileAs($dir, $file, $name);
+        $url = url('/storage/'.$dir.'/'.$name);
+
+        // Auto-set permit_available flag in status.json so tracking reflects availability
+        $appsDir = storage_path('app/applications/'.$safe);
+        if (!is_dir($appsDir)) { @mkdir($appsDir, 0775, true); }
+        $statusPath = $appsDir.DIRECTORY_SEPARATOR.'status.json';
+        $current = file_exists($statusPath) ? (json_decode(@file_get_contents($statusPath), true) ?: []) : [];
+        $current['permit_available'] = true;
+        $current['updated_at'] = now()->toISOString();
+        @file_put_contents($statusPath, json_encode($current));
+
+        return response()->json(['message'=>'Permit uploaded','url'=>$url, 'permit_available'=>true]);
+    }
+
+    // Applicant downloads final permit
+    public function downloadPermit(Request $request)
+    {
+        $trackingId = (string) $request->query('tracking_id');
+        if(!$trackingId) return response()->json(['message'=>'tracking_id required'], 400);
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $disk = Storage::disk('public');
+        $dir = 'permits/'.$safe;
+        $files = $disk->files($dir);
+        if(empty($files)) return response()->json(['message'=>'Permit not available yet'], 404);
+        $path = $files[0];
+        $full = storage_path('app/public/'.$path);
+        $downloadName = 'permit-'.$safe.'.docx';
+        if(!is_file($full)) return response()->json(['message'=>'Permit not available yet'], 404);
+        return response()->download($full, $downloadName);
     }
 }

@@ -145,7 +145,7 @@
       <input type="text" id="municipality">
 
       <label>Province</label>
-T      <input type="text" id="province">
+      <input type="text" id="province">
 
       <label>Island</label>
       <input type="text" id="island">
@@ -242,6 +242,25 @@ T      <input type="text" id="province">
     </div>
     <div class="actions" style="margin-top:12px;">
       <button type="button" onclick="submitApplication()">Submit Application</button>
+    </div>
+  </div>
+
+  <!-- Application Actions Modal -->
+  <div id="appActionsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="appActionsTitle">
+    <div class="modal__backdrop" onclick="closeAppActionsModal()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <h3 id="appActionsTitle">Next Steps</h3>
+      </div>
+      <div class="modal__body">
+        <p style="margin:0 0 8px;">You can preview your filled form, upload supporting documents, or submit the application.</p>
+      </div>
+      <div class="modal__footer" style="display:flex; gap:8px;">
+        <button type="button" onclick="showPreview()">Preview</button>
+        <button type="button" class="secondary" onclick="triggerUpload()">Upload Files</button>
+        <button type="button" onclick="submitApplication()">Submit</button>
+        <button type="button" class="secondary" onclick="closeAppActionsModal()">Close</button>
+      </div>
     </div>
   </div>
 

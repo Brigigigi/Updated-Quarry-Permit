@@ -486,6 +486,59 @@ class ApplicationFormController extends Controller
         ]);
     }
 
+    // List/search applications by applicant name for admin dashboard
+    public function list(Request $request)
+    {
+        $q = (string) $request->query('q', '');
+        $root = storage_path('app/applications');
+        $items = [];
+        if (is_dir($root)) {
+            foreach (scandir($root) as $dir) {
+                if ($dir === '.' || $dir === '..') continue;
+                $full = $root.DIRECTORY_SEPARATOR.$dir;
+                if (!is_dir($full)) continue;
+
+                $trackingId = $dir;
+                $metaPath = $full.DIRECTORY_SEPARATOR.'meta.json';
+                $formPath = $full.DIRECTORY_SEPARATOR.'form.json';
+                $statusPath = $full.DIRECTORY_SEPARATOR.'status.json';
+
+                $meta = file_exists($metaPath) ? (json_decode(@file_get_contents($metaPath), true) ?: []) : [];
+                $form = file_exists($formPath) ? (json_decode(@file_get_contents($formPath), true) ?: []) : [];
+                $status = file_exists($statusPath) ? (json_decode(@file_get_contents($statusPath), true) ?: []) : [];
+
+                $trackingId = (string)($meta['tracking_id'] ?? $trackingId);
+                $name = (string)($form['applicantName'] ?? ($form['applicantSignatureName'] ?? ''));
+                $progress = (int)($status['progress'] ?? 0);
+                $submitted = (bool)($meta['submitted'] ?? false);
+                $createdAt = (string)($meta['created_at'] ?? '');
+                $submittedAt = (string)($meta['submitted_at'] ?? '');
+
+                if ($q !== '' && stripos($name, $q) === false) continue;
+
+                $items[] = [
+                    'tracking_id' => $trackingId,
+                    'applicant_name' => $name,
+                    'progress' => $progress,
+                    'submitted' => $submitted,
+                    'created_at' => $createdAt,
+                    'submitted_at' => $submittedAt,
+                ];
+            }
+        }
+        // Sort: submitted_at desc, then created_at desc
+        usort($items, function($a, $b){
+            $sa = $a['submitted_at'] ?? '';
+            $sb = $b['submitted_at'] ?? '';
+            if ($sa !== '' || $sb !== '') {
+                return strcmp($sb, $sa);
+            }
+            return strcmp($b['created_at'] ?? '', $a['created_at'] ?? '');
+        });
+
+        return response()->json(['items' => array_values($items)]);
+    }
+
     // Admin uploads final permit for applicant to download
     public function uploadPermit(Request $request)
     {

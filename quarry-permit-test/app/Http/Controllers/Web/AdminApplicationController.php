@@ -40,6 +40,9 @@ class AdminApplicationController extends Controller
 
     public function index(Request $request)
     {
+        $q = trim((string)$request->query('q', ''));
+        $placeholders = $this->getPlaceholders();
+        $expected = max(1, count($placeholders));
         $appsDir = storage_path('app/applications');
         $items = [];
         if (is_dir($appsDir)) {
@@ -87,10 +90,31 @@ class AdminApplicationController extends Controller
                     $applicantName = trim((string)($form['applicantName'] ?? $form['applicant_signature_name'] ?? $form['applicantSignatureName'] ?? ''));
                 }
 
+                // progress: compute same way as the app page progress bar (checks + signoffs)
+                $statusPath = $full.DIRECTORY_SEPARATOR.'status.json';
+                $progress = 0;
+                if (file_exists($statusPath)) {
+                    $status = json_decode(@file_get_contents($statusPath), true) ?: [];
+                    // Count only expected keys to avoid drift
+                    $allowedChecks = ['fields_ok','files_ok','references_ok'];
+                    $allowedSigners = ['chair','secretary','governor','mayor','barangay_captain'];
+                    $checksCount = 0;
+                    foreach ($allowedChecks as $k) { if (!empty($status['checks'][$k])) $checksCount++; }
+                    $signCount = 0;
+                    foreach ($allowedSigners as $r) { if (!empty($status['signoffs'][$r]['signed'])) $signCount++; }
+                    $totalItems = count($allowedChecks) + count($allowedSigners); // 8
+                    $progress = (int) round((($checksCount + $signCount) / max(1, $totalItems)) * 100);
+                }
+                // If no status yet, keep progress at 0% (admin has not started)
+                if ($progress < 0) $progress = 0; if ($progress > 100) $progress = 100;
+
+                // filter by applicant name when searching
+                if ($q !== '' && stripos($applicantName, $q) === false) continue;
+
                 $items[] = [
                     'tracking_id' => $trackingId,
                     'created_at' => $createdAt,
-                    'fields_filled' => $fieldsFilled,
+                    'progress' => $progress,
                     'files_uploaded' => $filesCount,
                     'applicant_name' => $applicantName,
                 ];
@@ -264,14 +288,14 @@ class AdminApplicationController extends Controller
         $signCount = 0; foreach ($signoffs as $row) { if (!empty($row['signed'])) $signCount++; }
         $autoPercent = (int) round((($checksCount + $signCount) / 8) * 100);
 
-        $payload = array_replace_recursive($current, [
-            'progress' => $autoPercent,
-            'checks' => $checks,
-            'signoffs' => $signoffs,
-            'permit_available' => (bool) $request->boolean('permit_available'),
-            'note' => (string) $request->input('note', ($current['note'] ?? '')),
-            'updated_at' => now()->toISOString(),
-        ]);
+        // Replace checks/signoffs blocks completely to avoid legacy keys inflating counts
+        $payload = $current;
+        $payload['progress'] = $autoPercent;
+        $payload['checks'] = $checks;
+        $payload['signoffs'] = $signoffs;
+        $payload['permit_available'] = (bool) $request->boolean('permit_available');
+        $payload['note'] = (string) $request->input('note', ($current['note'] ?? ''));
+        $payload['updated_at'] = now()->toISOString();
 
         @file_put_contents($statusPath, json_encode($payload));
 

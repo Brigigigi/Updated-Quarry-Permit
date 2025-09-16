@@ -25,6 +25,8 @@ Route::get('/application/files', [ApplicationFormController::class, 'files']);
 Route::post('/application/start', [ApplicationFormController::class, 'start']);
 Route::get('/application/status', [ApplicationFormController::class, 'status']);
 Route::post('/application/submit', [ApplicationFormController::class, 'submit']);
+// Admin list/search applications
+Route::get('/application/list', [ApplicationFormController::class, 'list']);
 // Final Permit (admin-provided)
 Route::post('/application/permit/upload', [ApplicationFormController::class, 'uploadPermit']);
 Route::get('/application/permit/download', [ApplicationFormController::class, 'downloadPermit']);

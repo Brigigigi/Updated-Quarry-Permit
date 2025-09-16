@@ -78,135 +78,414 @@ function togglePages(showId) {
     pages.forEach(id => document.getElementById(id).classList.toggle('hidden', id !== showId));
 }
 
-function showRegister() { togglePages('registerPage'); }
-function showLogin() { togglePages('loginPage'); }
-function showMenu() { togglePages('menuPage'); }
-
-function showForm() {
-    const role = sessionStorage.getItem('currentRole');
-    togglePages(role==='admin' ? 'formPageAdmin' : 'formPageUser');
-    if(role==='admin' && !checklistInitialized){
-        initChecklist();
-        checklistInitialized = true;
-        loadChecklist();
-        updateProgress();
-    }
-    if(role==='user') loadApplication();
+// Helper: detect if we are on landing (menu) view
+function isOnMenuView(){
+    const menu = document.getElementById('menuPage');
+    return menu && !menu.classList.contains('hidden');
 }
 
-function showApplicationForm() {
-    togglePages('formApplicationUser');
-    ensureTrackingId().then(() => ensurePlaceholders(true)).then(() => {
-        buildApplicationForm(window.APP_PLACEHOLDERS || []);
-        loadApplication();
-        showTrackingWarning();
-    });
-}
+// ------------------- PAGE NAVIGATION (updated) -------------------
 
-function showAppActions(){
-    // Validate completeness before proceeding
-    const check = validateApplicationCompleteness();
-    if (!check.ok) {
-        // Show modal with missing list instead of alert
-        if (typeof showValidationModal === 'function') {
-            showValidationModal(check.missing);
-        } else {
-            alert(`Please complete all fields before proceeding. Missing: ${check.missing.slice(0,3).join(', ')}${check.missing.length>3?'...':''}`);
+// Exclusive reveal: show JUST one of these landing sections at a time.
+// returns true if the requested section ended up visible, false if it was hidden (toggle).
+function revealExclusive(id, options = { scroll: true, toggle: true }) {
+  const sections = ['formPageUser','formPageAdmin','formApplicationUser','trackPage'];
+  let becameVisible = false;
+
+  sections.forEach(secId => {
+    const el = document.getElementById(secId);
+    if (!el) return;
+    if (secId === id) {
+      if (el.classList.contains('hidden')) {
+        // show
+        el.classList.remove('hidden');
+        becameVisible = true;
+        if (options.scroll) {
+          requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
         }
-        const first = document.getElementById(check.firstId);
-        if (first) first.focus();
-        return;
+      } else if (options.toggle) {
+        // hide (toggle)
+        el.classList.add('hidden');
+        becameVisible = false;
+      } else {
+        becameVisible = true;
+      }
+    } else {
+      // hide any other open section
+      if (!el.classList.contains('hidden')) el.classList.add('hidden');
     }
-    // Auto-save before moving to actions page
-    saveApplication(true).finally(() => {
-        togglePages('appActionsPage');
-    });
+  });
+
+  return becameVisible;
 }
 
-// Submit: save, show menu, thank-you modal, reset form for next applicant
-async function submitApplication(){
-    // Final validation before submit
-    const check = validateApplicationCompleteness();
-    if(!check.ok){
-        showValidationModal(check.missing);
-        const first = document.getElementById(check.firstId);
-        if (first) first.focus();
-        return;
+// show register/login/menu keep as-is:
+function showRegister() { togglePages('registerPage'); }
+function showLogin()    { togglePages('loginPage'); }
+function showMenu()     { togglePages('menuPage'); }
+
+// Checklist (uses admin/user variant)
+function showForm() {
+  const role = sessionStorage.getItem('currentRole');
+  const target = (role === 'admin') ? 'formPageAdmin' : 'formPageUser';
+
+  if (isOnMenuView()) {
+    const opened = revealExclusive(target);
+    if (!opened) return; // toggled closed -> nothing more to do
+
+    // Only initialize when we actually opened the section
+    if (role === 'admin' && !checklistInitialized) {
+      initChecklist();
+      checklistInitialized = true;
+      loadChecklist();
+      updateProgress();
     }
-    const submittedTid = sessionStorage.getItem('tracking_id') || '';
+    if (role === 'user') loadApplication();
+    return;
+  }
+
+  // Non-landing fallback: page switch
+  togglePages(target);
+  if (role === 'admin' && !checklistInitialized) {
+    initChecklist();
+    checklistInitialized = true;
+    loadChecklist();
+    updateProgress();
+  }
+  if (role === 'user') loadApplication();
+}
+
+// Application form (async so we can await placeholders/tracking)
+async function showApplicationForm() {
+  if (isOnMenuView()) {
+    const opened = revealExclusive('formApplicationUser');
+    if (!opened) return; // hidden by toggle
+
+    try {
+      await ensureTrackingId();
+      await ensurePlaceholders(true);
+      buildApplicationForm(window.APP_PLACEHOLDERS || []);
+      loadApplication();
+      showTrackingWarning();
+    } catch (err) {
+      console.error('Error preparing application form:', err);
+    }
+    return;
+  }
+
+  // Non-landing fallback
+  togglePages('formApplicationUser');
+  try {
+    await ensureTrackingId();
+    await ensurePlaceholders(true);
+    buildApplicationForm(window.APP_PLACEHOLDERS || []);
+    loadApplication();
+    showTrackingWarning();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// Track page
+function showTrack() {
+  if (isOnMenuView()) {
+    const opened = revealExclusive('trackPage');
+    if (!opened) return; // toggled closed
+  } else {
+    togglePages('trackPage');
+  }
+
+  const tid = sessionStorage.getItem('tracking_id') || '';
+  const input = document.getElementById('trackIdInput');
+  if (tid && input && !input.value) input.value = tid;
+  if (input && input.value.trim()) { checkStatus(); }
+}
+
+// Proceed from application form to the actions page
+async function showAppActions(){
+  // Validate completeness before proceeding
+  const check = validateApplicationCompleteness();
+  if (!check.ok) {
+    if (typeof showValidationModal === 'function') {
+      showValidationModal(check.missing);
+    } else {
+      alert(`Please complete all fields before proceeding. Missing: ${check.missing.slice(0,3).join(', ')}${check.missing.length>3?'...':''}`);
+    }
+    const first = document.getElementById(check.firstId);
+    if (first) first.focus();
+    return;
+  }
+
+  try {
     await saveApplication(true);
-    try{
-        await safeFetch('/api/application/submit', {
-            method:'POST',
-            headers:{ 'Content-Type':'application/json' },
-            body: JSON.stringify({ tracking_id: submittedTid })
-        });
-    }catch(_){ /* ignore, client fallback still shows modal */ }
-    // Navigate to landing
-    togglePages('menuPage');
-    // Show submission modal with the tracking id
-    window.LAST_SUBMITTED_TID = submittedTid;
-    const el = document.getElementById('submittedTidDisplay');
-    if (el) el.textContent = submittedTid;
-    const modal = document.getElementById('submissionModal');
-    if (modal) modal.classList.remove('hidden');
-    // Clear form fields and tracking so next applicant starts fresh
-    clearApplicationForm();
-    sessionStorage.removeItem('tracking_id');
+  } catch(_) { /* ignore, still navigate */ }
+
+  // Prefer modal popup for actions
+  openAppActionsModal();
+}
+
+function openAppActionsModal(){
+  const m = document.getElementById('appActionsModal');
+  if (m) m.classList.remove('hidden');
+}
+
+function closeAppActionsModal(){
+  const m = document.getElementById('appActionsModal');
+  if (m) m.classList.add('hidden');
+}
+
+// Final submit flow
+async function submitApplication(){
+  const check = validateApplicationCompleteness();
+  if(!check.ok){
+    if (typeof showValidationModal === 'function') {
+      showValidationModal(check.missing);
+    } else {
+      alert(`Please complete all fields before submitting. Missing: ${check.missing.slice(0,3).join(', ')}${check.missing.length>3?'...':''}`);
+    }
+    const first = document.getElementById(check.firstId);
+    if (first) first.focus();
+    return;
+  }
+
+  const submittedTid = sessionStorage.getItem('tracking_id') || '';
+  await saveApplication(true);
+  try{
+    await safeFetch('/api/application/submit', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ tracking_id: submittedTid })
+    });
+  }catch(_){ /* ignore; still show modal as confirmation */ }
+
+  // Close actions modal if open
+  closeAppActionsModal();
+  // Navigate back to landing and reset form state
+  togglePages('menuPage');
+  clearApplicationForm();
+  sessionStorage.removeItem('tracking_id');
+
+  // Show submission modal with the tracking id
+  window.LAST_SUBMITTED_TID = submittedTid;
+  const el = document.getElementById('submittedTidDisplay');
+  if (el) el.textContent = submittedTid;
+  const modal = document.getElementById('submissionModal');
+  if (modal) modal.classList.remove('hidden');
 }
 
 function closeSubmissionModal(){
-    const modal = document.getElementById('submissionModal');
-    if (modal) modal.classList.add('hidden');
+  const modal = document.getElementById('submissionModal');
+  if (modal) modal.classList.add('hidden');
 }
 
 function copySubmittedTrackingId(){
-    const tid = window.LAST_SUBMITTED_TID || '';
-    if(!tid){ notify('Tracking ID not found','error'); return; }
-    navigator.clipboard.writeText(tid).then(()=>{ notify('Tracking ID copied'); }).catch(()=>{ notify('Copy failed','error'); });
+  const tid = window.LAST_SUBMITTED_TID || '';
+  if(!tid){ notify('Tracking ID not found','error'); return; }
+  navigator.clipboard.writeText(tid)
+    .then(()=> notify('Tracking ID copied','success'))
+    .catch(()=> notify('Copy failed','error'));
 }
 
 function clearApplicationForm(){
-    const ids = (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length) ? window.APP_PLACEHOLDERS : DEFAULT_APP_FIELDS;
-    ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const ids = (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length)
+    ? window.APP_PLACEHOLDERS
+    : DEFAULT_APP_FIELDS;
+  ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
 }
 
-function showTrack(){
-    // helper functions for completeness (injected here to avoid load-order issues)
-    if (typeof window.validateApplicationCompleteness !== 'function') {
-        window.getRequiredFieldIds = function(){
-            return (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length)
-                ? window.APP_PLACEHOLDERS
-                : DEFAULT_APP_FIELDS;
-        };
-        window.humanizeKey = function(k){
-            return k.replace(/([A-Z])/g,' $1').replace(/^./, s=>s.toUpperCase()).replace(/_/g,' ');
-        };
-        window.validateApplicationCompleteness = function(){
-            const missing = [];
-            let firstId = null;
-            window.getRequiredFieldIds().forEach(id => {
-                const el = document.getElementById(id);
-                const val = (el && typeof el.value === 'string') ? el.value.trim() : '';
-                if (!val) {
-                    missing.push(window.humanizeKey(id));
-                    if (el) {
-                        el.classList.add('input-error');
-                        if (!firstId) firstId = id;
-                    }
-                } else if (el) {
-                    el.classList.remove('input-error');
-                }
-            });
-            return { ok: missing.length === 0, missing, firstId };
-        };
-    }
-    togglePages('trackPage');
-    const tid = sessionStorage.getItem('tracking_id') || '';
-    const input = document.getElementById('trackIdInput');
-    if (tid && input && !input.value) input.value = tid;
-    if (input && input.value.trim()) { checkStatus(); }
-}
+// // Helper: reveal a section below the landing card and scroll to it
+// function revealBelow(id){
+//     const el = document.getElementById(id);
+//     if (!el) return false;
+//     el.classList.remove('hidden');
+//     // smooth scroll after paint
+//     requestAnimationFrame(() => {
+//         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+//     });
+//     return true;
+// }
+
+// function showRegister() { togglePages('registerPage'); }
+// function showLogin() { togglePages('loginPage'); }
+// function showMenu() { togglePages('menuPage'); }
+
+// function showForm() {
+//     const role = sessionStorage.getItem('currentRole');
+//     const target = (role === 'admin') ? 'formPageAdmin' : 'formPageUser';
+//     if (isOnMenuView()) {
+//         // Landing behavior: open below and scroll
+//         revealExclusive(target);
+//         if (role === 'admin' && !checklistInitialized) {
+//             initChecklist();
+//             checklistInitialized = true;
+//             loadChecklist();
+//             updateProgress();
+//         }
+//         if (role === 'user') loadApplication();
+//         return;
+//     }
+
+//     // Exclusive reveal: ensures only one section is open at a time
+// function revealExclusive(id) {
+//     const sections = ['formPageUser','formPageAdmin','formApplicationUser','trackPage'];
+//     sections.forEach(secId => {
+//         const el = document.getElementById(secId);
+//         if (el) {
+//             if (secId === id) {
+//                 el.classList.remove('hidden');
+//                 // Smooth scroll to the revealed section
+//                 requestAnimationFrame(() => {
+//                     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+//                 });
+//             } else {
+//                 el.classList.add('hidden');
+//             }
+//         }
+//     });
+// }
+
+
+//     // Fallback: classic page switch
+//     togglePages(target);
+//     if (role === 'admin' && !checklistInitialized) {
+//         initChecklist();
+//         checklistInitialized = true;
+//         loadChecklist();
+//         updateProgress();
+//     }
+//     if (role === 'user') loadApplication();
+// }
+
+// function showApplicationForm() {
+//     if (isOnMenuView()) {
+//         // Open below landing and scroll
+//         revealExclusive('formApplicationUser');
+//         ensureTrackingId()
+//             .then(() => ensurePlaceholders(true))
+//             .then(() => {
+//                 buildApplicationForm(window.APP_PLACEHOLDERS || []);
+//                 loadApplication();
+//                 showTrackingWarning();
+//             });
+//         return;
+//     }
+//     // Fallback: classic page switch
+//     togglePages('formApplicationUser');
+//     ensureTrackingId().then(() => ensurePlaceholders(true)).then(() => {
+//         buildApplicationForm(window.APP_PLACEHOLDERS || []);
+//         loadApplication();
+//         showTrackingWarning();
+//     });
+// }
+
+// function showAppActions(){
+//     // Validate completeness before proceeding
+//     const check = validateApplicationCompleteness();
+//     if (!check.ok) {
+//         // Show modal with missing list instead of alert
+//         if (typeof showValidationModal === 'function') {
+//             showValidationModal(check.missing);
+//         } else {
+//             alert(`Please complete all fields before proceeding. Missing: ${check.missing.slice(0,3).join(', ')}${check.missing.length>3?'...':''}`);
+//         }
+//         const first = document.getElementById(check.firstId);
+//         if (first) first.focus();
+//         return;
+//     }
+//     // Auto-save before moving to actions page
+//     saveApplication(true).finally(() => {
+//         togglePages('appActionsPage');
+//     });
+// }
+
+// // Submit: save, show menu, thank-you modal, reset form for next applicant
+// async function submitApplication(){
+//     // Final validation before submit
+//     const check = validateApplicationCompleteness();
+//     if(!check.ok){
+//         showValidationModal(check.missing);
+//         const first = document.getElementById(check.firstId);
+//         if (first) first.focus();
+//         return;
+//     }
+//     const submittedTid = sessionStorage.getItem('tracking_id') || '';
+//     await saveApplication(true);
+//     try{
+//         await safeFetch('/api/application/submit', {
+//             method:'POST',
+//             headers:{ 'Content-Type':'application/json' },
+//             body: JSON.stringify({ tracking_id: submittedTid })
+//         });
+//     }catch(_){ /* ignore, client fallback still shows modal */ }
+//     // Navigate to landing
+//     togglePages('menuPage');
+//     // Show submission modal with the tracking id
+//     window.LAST_SUBMITTED_TID = submittedTid;
+//     const el = document.getElementById('submittedTidDisplay');
+//     if (el) el.textContent = submittedTid;
+//     const modal = document.getElementById('submissionModal');
+//     if (modal) modal.classList.remove('hidden');
+//     // Clear form fields and tracking so next applicant starts fresh
+//     clearApplicationForm();
+//     sessionStorage.removeItem('tracking_id');
+// }
+
+// function closeSubmissionModal(){
+//     const modal = document.getElementById('submissionModal');
+//     if (modal) modal.classList.add('hidden');
+// }
+
+// function copySubmittedTrackingId(){
+//     const tid = window.LAST_SUBMITTED_TID || '';
+//     if(!tid){ notify('Tracking ID not found','error'); return; }
+//     navigator.clipboard.writeText(tid).then(()=>{ notify('Tracking ID copied'); }).catch(()=>{ notify('Copy failed','error'); });
+// }
+
+// function clearApplicationForm(){
+//     const ids = (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length) ? window.APP_PLACEHOLDERS : DEFAULT_APP_FIELDS;
+//     ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+// }
+
+// function showTrack(){
+//     // helper functions for completeness (injected here to avoid load-order issues)
+//     if (typeof window.validateApplicationCompleteness !== 'function') {
+//         window.getRequiredFieldIds = function(){
+//             return (window.APP_PLACEHOLDERS && window.APP_PLACEHOLDERS.length)
+//                 ? window.APP_PLACEHOLDERS
+//                 : DEFAULT_APP_FIELDS;
+//         };
+//         window.humanizeKey = function(k){
+//             return k.replace(/([A-Z])/g,' $1').replace(/^./, s=>s.toUpperCase()).replace(/_/g,' ');
+//         };
+//         window.validateApplicationCompleteness = function(){
+//             const missing = [];
+//             let firstId = null;
+//             window.getRequiredFieldIds().forEach(id => {
+//                 const el = document.getElementById(id);
+//                 const val = (el && typeof el.value === 'string') ? el.value.trim() : '';
+//                 if (!val) {
+//                     missing.push(window.humanizeKey(id));
+//                     if (el) {
+//                         el.classList.add('input-error');
+//                         if (!firstId) firstId = id;
+//                     }
+//                 } else if (el) {
+//                     el.classList.remove('input-error');
+//                 }
+//             });
+//             return { ok: missing.length === 0, missing, firstId };
+//         };
+//     }
+//     if (isOnMenuView()) {
+//         revealExclusive('trackPage');
+//     } else {
+//         togglePages('trackPage');
+//     }
+//     const tid = sessionStorage.getItem('tracking_id') || '';
+//     const input = document.getElementById('trackIdInput');
+//     if (tid && input && !input.value) input.value = tid;
+//     if (input && input.value.trim()) { checkStatus(); }
+// }
 
 // ------------------- HELPER FUNCTIONS -------------------
 function getCsrfToken() {

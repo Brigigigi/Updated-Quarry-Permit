@@ -130,46 +130,36 @@ function showForm() {
   const target = (role === 'admin') ? 'formPageAdmin' : 'formPageUser';
 
   if (isOnMenuView()) {
-    const opened = revealExclusive(target);
-    if (!opened) return; // toggled closed -> nothing more to do
-
-    // Only initialize when we actually opened the section
+    // Open inside modal on landing (applicant home)
+    openProcessModal(target, 'Checklist');
     if (role === 'admin' && !checklistInitialized) {
-      initChecklist();
-      checklistInitialized = true;
-      loadChecklist();
-      updateProgress();
+      initChecklist(); checklistInitialized = true; loadChecklist(); updateProgress();
     }
-    if (role === 'user') loadApplication();
+    if (role !== 'admin') loadApplication();
     return;
   }
 
   // Non-landing fallback: page switch
   togglePages(target);
   if (role === 'admin' && !checklistInitialized) {
-    initChecklist();
-    checklistInitialized = true;
-    loadChecklist();
-    updateProgress();
+    initChecklist(); checklistInitialized = true; loadChecklist(); updateProgress();
   }
-  if (role === 'user') loadApplication();
+  if (role !== 'admin') loadApplication();
 }
 
 // Application form (async so we can await placeholders/tracking)
 async function showApplicationForm() {
+  const role = sessionStorage.getItem('currentRole');
   if (isOnMenuView()) {
-    const opened = revealExclusive('formApplicationUser');
-    if (!opened) return; // hidden by toggle
-
+    // Prepare form then load into modal
     try {
       await ensureTrackingId();
       await ensurePlaceholders(true);
       buildApplicationForm(window.APP_PLACEHOLDERS || []);
       loadApplication();
-      showTrackingWarning();
-    } catch (err) {
-      console.error('Error preparing application form:', err);
-    }
+    } catch(err){ console.error(err); }
+    openProcessModal('formApplicationUser', 'Application Form');
+    showTrackingWarning();
     return;
   }
 
@@ -188,18 +178,99 @@ async function showApplicationForm() {
 
 // Track page
 function showTrack() {
-  if (isOnMenuView()) {
-    const opened = revealExclusive('trackPage');
-    if (!opened) return; // toggled closed
-  } else {
-    togglePages('trackPage');
-  }
+  if (isOnMenuView()) { openProcessModal('trackPage', 'Track Application'); }
+  else { togglePages('trackPage'); }
 
   const tid = sessionStorage.getItem('tracking_id') || '';
   const input = document.getElementById('trackIdInput');
   if (tid && input && !input.value) input.value = tid;
   if (input && input.value.trim()) { checkStatus(); }
 }
+
+// ---------- Process Modal (moves sections into a wide modal) ----------
+let __movedSection = null;
+let __movedSectionParent = null;
+let __movedSectionNext = null;
+
+function openProcessModal(sectionId, title){
+  const modal = document.getElementById('processModal');
+  const body = document.getElementById('processBody');
+  const titleEl = document.getElementById('processTitle');
+  const el = document.getElementById(sectionId);
+  if (!modal || !body || !titleEl || !el) return;
+  // restore any previous section first
+  if (__movedSection) closeProcessModal();
+  titleEl.textContent = title || '';
+  __movedSection = el;
+  __movedSectionParent = el.parentNode;
+  __movedSectionNext = el.nextSibling;
+  el.classList.remove('hidden');
+  body.innerHTML = '';
+  body.appendChild(el);
+  modal.classList.remove('hidden');
+  // prevent background scroll
+  document.body.classList.add('no-scroll');
+}
+
+function closeProcessModal(){
+  const modal = document.getElementById('processModal');
+  if (__movedSection && __movedSectionParent){
+    // put it back where it was and hide
+    if (__movedSectionNext && __movedSectionNext.parentNode === __movedSectionParent){
+      __movedSectionParent.insertBefore(__movedSection, __movedSectionNext);
+    } else {
+      __movedSectionParent.appendChild(__movedSection);
+    }
+    __movedSection.classList.add('hidden');
+  }
+  __movedSection = null; __movedSectionParent = null; __movedSectionNext = null;
+  if (modal) modal.classList.add('hidden');
+  document.body.classList.remove('no-scroll');
+}
+
+// Payment Options modal
+function openPaymentModal(){
+  const m = document.getElementById('paymentModal');
+  const tid = sessionStorage.getItem('tracking_id') || '';
+  if (m) m.classList.remove('hidden');
+}
+function closePaymentModal(){
+  const m = document.getElementById('paymentModal');
+  if (m) m.classList.add('hidden');
+}
+
+async function submitPaymentRef(){
+  const tracking_id = sessionStorage.getItem('tracking_id') || '';
+  const method = (document.getElementById('payMethod')?.value || '').trim();
+  const reference = (document.getElementById('payRefInput')?.value || '').trim();
+  const amountStr = (document.getElementById('payAmtInput')?.value || '').trim();
+  const amount = amountStr ? parseFloat(amountStr) : null;
+  if (!tracking_id) { notify('Tracking ID missing. Open the Application Form first.','error'); return; }
+  if (!method || !reference){ notify('Please select a method and enter the reference number.','warning'); return; }
+  try{
+    const res = await fetch(`${API_BASE}/api/application/payment`,{
+      method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body: JSON.stringify({ tracking_id, method, reference, amount })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){ throw new Error(data?.message || 'Failed to record payment'); }
+    notify('Payment recorded. Please upload your receipt.','success');
+    closePaymentModal();
+    // Suggest upload dialog after marking paid
+    if (typeof triggerUpload === 'function') setTimeout(()=> triggerUpload(), 400);
+  }catch(err){ notify(err.message || 'Error saving payment','error'); }
+}
+
+// Close process modal with ESC
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    const modal = document.getElementById('processModal');
+    if (modal && !modal.classList.contains('hidden')) {
+      ev.preventDefault();
+      closeProcessModal();
+    }
+  }
+});
 
 // Proceed from application form to the actions page
 async function showAppActions(){

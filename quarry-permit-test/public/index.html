@@ -61,6 +61,7 @@
         <label for="trackIdInput">Tracking ID</label>
         <input type="text" id="trackIdInput" placeholder="paste tracking id here">
         <button class="hero__btn" onclick="checkStatus()">Check</button>
+        <button class="hero__btn" onclick="openPaymentModal()">Payment Options</button>
         <button class="hero__btn" id="downloadPermitBtn" onclick="downloadTrackedDoc()">Download Permit</button>
         <a class="hero__admin" href="#" onclick="showMenu(); return false;">Back to Home</a>
       </div>
@@ -241,6 +242,7 @@
       <button type="button" class="secondary" onclick="showApplicationForm()">Back to Form</button>
     </div>
     <div class="actions" style="margin-top:12px;">
+      <button type="button" class="secondary" onclick="openPaymentModal()">Payment Options</button>
       <button type="button" onclick="submitApplication()">Submit Application</button>
     </div>
   </div>
@@ -312,6 +314,49 @@
       </div>
       <div class="modal__footer">
         <button onclick="closeSubmissionModal()">Okay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Process Modal (Checklist / Application Form / Track) -->
+  <div id="processModal" class="modal modal--wide hidden" role="dialog" aria-modal="true" aria-labelledby="processTitle">
+    <div class="modal__backdrop" onclick="closeProcessModal()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <h3 id="processTitle"></h3>
+      </div>
+      <div id="processBody" class="modal__body"></div>
+    </div>
+  </div>
+
+  <!-- Payment Options Modal -->
+  <div id="paymentModal" class="modal modal--info hidden" role="dialog" aria-modal="true" aria-labelledby="paymentTitle">
+    <div class="modal__backdrop" onclick="closePaymentModal()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <h3 id="paymentTitle">Payment Options</h3>
+      </div>
+      <div class="modal__body">
+        <p style="margin:0 0 8px;">Please include your <strong>Tracking ID</strong> as reference in any payment and <strong>upload the proof of payment</strong> using “Upload Supporting Files”.</p>
+        <div class="status-grid" style="grid-template-columns: 1fr 2fr;">
+          <div class="label">Select Method</div>
+          <div class="value">
+            <select id="payMethod" style="width:100%">
+              <option value="counter">Over‑the‑Counter (Treasurer’s Office)</option>
+              <option value="bank">Bank Deposit</option>
+              <option value="gcash">E‑wallet (GCash)</option>
+            </select>
+          </div>
+          <div class="label">Reference No.</div>
+          <div class="value"><input type="text" id="payRefInput" placeholder="e.g. OR# / Deposit Ref / GCash Ref" style="width:100%"></div>
+          <div class="label">Amount (optional)</div>
+          <div class="value"><input type="number" id="payAmtInput" step="0.01" placeholder="0.00" style="width:160px"></div>
+        </div>
+        <p style="margin:8px 0; opacity:0.85;">After recording your payment, please upload the receipt via “Upload Supporting Files”.</p>
+      </div>
+      <div class="modal__footer">
+        <button type="button" class="secondary" onclick="closePaymentModal()">Close</button>
+        <button type="button" onclick="submitPaymentRef()">Mark as Paid</button>
       </div>
     </div>
   </div>

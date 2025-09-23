@@ -4,6 +4,14 @@ namespace App\Http\Controllers\Web;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use App\Models\PermitApplication;
+use App\Models\Bond;
+use App\Models\BoardAction;
+use App\Models\Permit;
+use Carbon\Carbon;
+
 
 class AdminApplicationController extends Controller
 {
@@ -108,21 +116,111 @@ class AdminApplicationController extends Controller
                 // If no status yet, keep progress at 0% (admin has not started)
                 if ($progress < 0) $progress = 0; if ($progress > 100) $progress = 100;
 
-                // filter by applicant name when searching
-                if ($q !== '' && stripos($applicantName, $q) === false) continue;
+                // Format created
+                $createdFmt = '';
+                if (is_string($createdAt) && $createdAt !== '') {
+                    try { $createdFmt = Carbon::parse($createdAt)->format('Y-m-d H:i'); } catch (\Throwable $e) { $createdFmt = str_replace(['T','Z'],' ', $createdAt); }
+                }
+                // map status to a badge class
+                $status = $isSubmitted ? 'submitted' : 'draft';
+                $statusClass = in_array($status, ['approved']) ? 'ok' : (in_array($status, ['denied','draft']) ? 'warn' : 'info');
 
                 $items[] = [
                     'tracking_id' => $trackingId,
                     'created_at' => $createdAt,
+                    'created_fmt' => $createdFmt,
+                    'status' => $status,
+                    'status_class' => $statusClass,
                     'progress' => $progress,
-                    'files_uploaded' => $filesCount,
                     'applicant_name' => $applicantName,
+                    'source' => 'legacy',
                 ];
             }
         }
 
-        // Simple sort by created_at desc if available
-        usort($items, function($a,$b){ return strcmp((string)($b['created_at']??''),(string)($a['created_at']??'')); });
+        // Merge DB v2 applications if table exists
+        if (Schema::hasTable('permit_application')) {
+            $rows = DB::table('permit_application')
+                ->select('id','tracking_id','status','created_at')
+                ->orderByDesc('created_at')
+                ->limit(500)
+                ->get();
+            foreach ($rows as $r) {
+                $tid = (string) ($r->tracking_id ?? '');
+                $applicantName = '';
+                if ($tid !== '') {
+                    $formPath = $appsDir.DIRECTORY_SEPARATOR.preg_replace('/[^A-Za-z0-9_\-]/','_', $tid).DIRECTORY_SEPARATOR.'form.json';
+                    if (is_file($formPath)) {
+                        $form = json_decode(@file_get_contents($formPath), true) ?: [];
+                        $applicantName = trim((string)($form['applicantName'] ?? $form['applicant_signature_name'] ?? $form['applicantSignatureName'] ?? ''));
+                    }
+                }
+                // compute progress via status.json if available
+                $progress = 0;
+                if ($tid !== '') {
+                    $dir = $appsDir.DIRECTORY_SEPARATOR.preg_replace('/[^A-Za-z0-9_\-]/','_', $tid);
+                    $statusPath = $dir.DIRECTORY_SEPARATOR.'status.json';
+                    if (is_file($statusPath)) {
+                        $adminStatus = json_decode(@file_get_contents($statusPath), true) ?: [];
+                        $checksCount = 0; foreach ((array)($adminStatus['checks'] ?? []) as $v) { if ($v) $checksCount++; }
+                        $signCount = 0; foreach ((array)($adminStatus['signoffs'] ?? []) as $row2) { if (!empty($row2['signed'])) $signCount++; }
+                        $progress = (int) round((($checksCount + $signCount) / 8) * 100);
+                        if ($progress < 0) $progress = 0; if ($progress > 100) $progress = 100;
+                    }
+                }
+                // Format DB created
+                $dbCreated = (string) ($r->created_at ?? '');
+                $dbCreatedFmt = '';
+                if ($dbCreated !== '') { try { $dbCreatedFmt = Carbon::parse($dbCreated)->format('Y-m-d H:i'); } catch (\Throwable $e) { $dbCreatedFmt = str_replace(['T','Z'],' ', $dbCreated); } }
+                // latest fee badge
+                $latestFee = null;
+                try {
+                    $latestFee = DB::table('fee_assessment')->where('application_id', $r->id)->orderByDesc('created_at')->value('total_amount');
+                } catch (\Throwable $e) { $latestFee = null; }
+
+                // status badge class for DB rows
+                $s = (string) ($r->status ?? '');
+                $statusClass = in_array($s, ['approved']) ? 'ok' : (in_array($s, ['denied','draft']) ? 'warn' : 'info');
+
+                $items[] = [
+                    'tracking_id' => $tid,
+                    'created_at' => $dbCreated,
+                    'created_fmt' => $dbCreatedFmt,
+                    'status' => (string) ($r->status ?? ''),
+                    'status_class' => $statusClass,
+                    'progress' => $progress,
+                    'applicant_name' => $applicantName,
+                    'source' => 'db',
+                    'latest_fee' => $latestFee,
+                ];
+            }
+        }
+
+        // Add a simple progress badge class
+        foreach ($items as &$it) {
+            $p = (int)($it['progress'] ?? 0);
+            $it['progress_badge'] = ($p >= 75) ? 'ok' : 'warn';
+        }
+        unset($it);
+
+        // Optional search across both sources
+        if ($q !== '') {
+            $qLower = mb_strtolower($q);
+            $items = array_values(array_filter($items, function($row) use ($qLower){
+                $name = mb_strtolower((string)($row['applicant_name'] ?? ''));
+                $tid  = mb_strtolower((string)($row['tracking_id'] ?? ''));
+                return (strpos($name, $qLower) !== false) || (strpos($tid, $qLower) !== false);
+            }));
+        }
+
+        // Sort by created desc with fallback
+        usort($items, function($a,$b){
+            $ac = (string)($a['created_at'] ?? '');
+            $bc = (string)($b['created_at'] ?? '');
+            $cmp = strcmp($bc, $ac);
+            if ($cmp !== 0) return $cmp;
+            return strcmp((string)($a['tracking_id']??''),(string)($b['tracking_id']??''));
+        });
 
         return view('admin.home', ['apps' => $items]);
     }
@@ -244,6 +342,8 @@ class AdminApplicationController extends Controller
             'files' => $files,
             'admin_files' => $adminFiles,
             'adminStatus' => $adminStatus,
+            // DB-backed summaries (if tables exist)
+            'db' => $this->loadDbSummaries($trackingId),
         ]);
     }
 
@@ -300,5 +400,235 @@ class AdminApplicationController extends Controller
         @file_put_contents($statusPath, json_encode($payload));
 
         return redirect()->route('admin.app.show', ['trackingId' => $trackingId])->with('status', 'Application status updated');
+    }
+
+    private function ensurePermitAppId(string $trackingId): ?int
+    {
+        if (!Schema::hasTable('permit_application')) return null;
+        $row = DB::table('permit_application')->where('tracking_id', $trackingId)->first();
+        if ($row) return (int) $row->id;
+        // create minimal row
+        $id = DB::table('permit_application')->insertGetId([
+            'tracking_id' => $trackingId,
+            'resource_type' => 'quarry',
+            'municipality' => 'Unknown',
+            'province' => 'Unknown',
+            'status' => 'submitted',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return $id;
+    }
+
+    public function saveBond(Request $request, string $trackingId)
+    {
+        $request->validate([
+            'type' => 'required|string',
+            'amount' => 'required|numeric|min:0',
+            'status' => 'required|string',
+        ]);
+        $appId = $this->ensurePermitAppId($trackingId);
+        if (!$appId) return back()->withErrors(['bond' => 'Database not ready.'])->withInput();
+        Bond::updateOrCreate(
+            ['application_id' => $appId],
+            [
+                'type' => $request->input('type'),
+                'amount' => $request->input('amount'),
+                'issuer' => $request->input('issuer'),
+                'policy_no' => $request->input('policy_no'),
+                'issue_date' => $request->input('issue_date') ?: null,
+                'expiry_date' => $request->input('expiry_date') ?: null,
+                'file_url' => $request->input('file_url'),
+                'status' => $request->input('status'),
+            ]
+        );
+        // Mark DB application stage
+        DB::table('permit_application')->where('id', $appId)->update(['status' => 'fees_bond', 'updated_at' => now()]);
+        return back()->with('status', 'Bond saved');
+    }
+
+    public function saveBoardAction(Request $request, string $trackingId)
+    {
+        $request->validate([
+            'resolution' => 'required|in:approve,rework,deny',
+        ]);
+        $appId = $this->ensurePermitAppId($trackingId);
+        if (!$appId) return back()->withErrors(['board' => 'Database not ready.']);
+        BoardAction::create([
+            'application_id' => $appId,
+            'meeting_no' => $request->input('meeting_no'),
+            'resolution' => $request->input('resolution'),
+            'minutes_url' => $request->input('minutes_url'),
+            'decided_at' => now(),
+        ]);
+        $res = $request->input('resolution');
+        $newStatus = ($res === 'approve') ? 'board' : (($res === 'deny') ? 'denied' : 'tech_review');
+        DB::table('permit_application')->where('id', $appId)->update(['status' => $newStatus, 'updated_at' => now()]);
+        return back()->with('status', 'Board action recorded');
+    }
+
+    public function grantPermit(Request $request, string $trackingId)
+    {
+        $request->validate([
+            'permit_no' => 'required|string',
+            'term_start' => 'required|date',
+        ]);
+        $appId = $this->ensurePermitAppId($trackingId);
+        if (!$appId) return back()->withErrors(['permit' => 'Database not ready.']);
+        // Preconditions: active bond and latest board approve
+        $bondOk = Bond::where('application_id', $appId)->where('status','active')->exists();
+        $lastBA = BoardAction::where('application_id', $appId)->orderByDesc('decided_at')->first();
+        if (!$bondOk) return back()->withErrors(['permit' => 'Active bond required.']);
+        if (!$lastBA || $lastBA->resolution !== 'approve') return back()->withErrors(['permit' => 'Board must approve before granting.']);
+
+        // Ensure grantor AppUser exists from session username
+        $grantorName = (string) (session('username') ?? 'Grantor');
+        $grantorId = null;
+        if (Schema::hasTable('app_user')) {
+            $row = DB::table('app_user')->where('full_name',$grantorName)->first();
+            if (!$row) {
+                $grantorId = DB::table('app_user')->insertGetId([
+                    'email' => null,
+                    'full_name' => $grantorName,
+                    'org' => null,
+                    'phone' => null,
+                    'role' => 'grantor',
+                    'is_active' => true,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            } else { $grantorId = (int)$row->id; }
+        } else {
+            return back()->withErrors(['permit' => 'Grantor table not ready.']);
+        }
+
+        $start = \Carbon\Carbon::parse($request->input('term_start'))->startOfDay();
+        $end = $start->copy()->addYears(5);
+        $permitNo = $request->input('permit_no');
+
+        // Avoid duplicate grant
+        if (Permit::where('application_id',$appId)->exists()) {
+            return back()->withErrors(['permit' => 'Permit already exists for this application.']);
+        }
+
+        Permit::create([
+            'application_id' => $appId,
+            'permit_no' => $permitNo,
+            'date_approved' => now()->toDateString(),
+            'term_start' => $start->toDateString(),
+            'term_end' => $end->toDateString(),
+            'renewal_count' => 0,
+            'total_years' => 5,
+            'grantor_id' => $grantorId,
+            'pdf_url' => null,
+            'qr_hash' => hash('sha256', $trackingId.$permitNo.now()->toISOString()),
+            'status' => 'active',
+        ]);
+
+        DB::table('permit_application')->where('id', $appId)->update(['status'=>'approved','updated_at'=>now()]);
+
+        // Also set legacy status.json permit_available flag for tracking view
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $dir = storage_path('app/applications/'.$safe);
+        if (!is_dir($dir)) { @mkdir($dir, 0775, true); }
+        $statusPath = $dir.DIRECTORY_SEPARATOR.'status.json';
+        $current = file_exists($statusPath) ? (json_decode(@file_get_contents($statusPath), true) ?: []) : [];
+        $current['permit_available'] = true;
+        $current['updated_at'] = now()->toISOString();
+        @file_put_contents($statusPath, json_encode($current));
+
+        return back()->with('status', 'Permit granted');
+    }
+
+    private function loadDbSummaries(string $trackingId): array
+    {
+        if (!Schema::hasTable('permit_application')) {
+            return ['bond'=>null,'board'=>null,'permit'=>null,'fees'=>[],'inspections'=>[]];
+        }
+        $row = DB::table('permit_application')->where('tracking_id',$trackingId)->first();
+        if (!$row) return ['bond'=>null,'board'=>null,'permit'=>null,'fees'=>[],'inspections'=>[]];
+        $appId = (int)$row->id;
+        $bond = Bond::where('application_id',$appId)->first();
+        $board = BoardAction::where('application_id',$appId)->orderByDesc('decided_at')->first();
+        $permit = Permit::where('application_id',$appId)->first();
+        $fees = \App\Models\FeeAssessment::where('application_id',$appId)->orderByDesc('created_at')->limit(20)->get();
+        $inspections = \App\Models\Inspection::where('application_id',$appId)->orderByDesc('scheduled_at')->limit(20)->get();
+        $payment = null;
+        try { if (Schema::hasTable('payment')) { $payment = DB::table('payment')->where('application_id',$appId)->orderByDesc('paid_at')->first(); } } catch (\Throwable $e) {}
+        return compact('bond','board','permit','fees','inspections','payment');
+    }
+
+    public function export(Request $request)
+    {
+        // Reuse index logic partially to get combined items
+        $appsDir = storage_path('app/applications');
+        $items = [];
+        // Legacy submitted apps only
+        if (is_dir($appsDir)) {
+            foreach (scandir($appsDir) as $dir) {
+                if ($dir==='.'||$dir==='..') continue; $full=$appsDir.DIRECTORY_SEPARATOR.$dir; if(!is_dir($full)) continue;
+                $metaPath = $full.DIRECTORY_SEPARATOR.'meta.json'; $formPath=$full.DIRECTORY_SEPARATOR.'form.json';
+                $isSubmitted=false; $createdAt='';
+                if (is_file($metaPath)) { $meta=json_decode(@file_get_contents($metaPath),true)?:[]; $isSubmitted=(bool)($meta['submitted']??false)||!empty($meta['submitted_at']??null); $createdAt=(string)($meta['created_at']??''); }
+                if(!$isSubmitted) continue;
+                $applicant=''; if(is_file($formPath)){ $form=json_decode(@file_get_contents($formPath),true)?:[]; $applicant=trim((string)($form['applicantName']??$form['applicant_signature_name']??$form['applicantSignatureName']??'')); }
+                // progress from status.json
+                $statusPath=$full.DIRECTORY_SEPARATOR.'status.json'; $progress=0; if(is_file($statusPath)){ $st=json_decode(@file_get_contents($statusPath),true)?:[]; $checks=0; foreach((array)($st['checks']??[]) as $v){ if($v) $checks++; } $signs=0; foreach((array)($st['signoffs']??[]) as $r){ if(!empty($r['signed'])) $signs++; } $progress=(int)round((($checks+$signs)/8)*100); if($progress<0)$progress=0; if($progress>100)$progress=100; }
+                $items[] = ['tracking_id'=>$dir,'applicant'=>$applicant,'created_at'=>$createdAt,'status'=>'submitted','progress'=>$progress];
+            }
+        }
+        // DB v2
+        if (Schema::hasTable('permit_application')) {
+            $rows=DB::table('permit_application')->select('tracking_id','status','created_at')->orderByDesc('created_at')->limit(500)->get();
+            foreach($rows as $r){ $tid=(string)($r->tracking_id??''); $applicant=''; if($tid!==''){ $fp=$appsDir.DIRECTORY_SEPARATOR.preg_replace('/[^A-Za-z0-9_\-]/','_',$tid).DIRECTORY_SEPARATOR.'form.json'; if(is_file($fp)){ $f=json_decode(@file_get_contents($fp),true)?:[]; $applicant=trim((string)($f['applicantName']??$f['applicant_signature_name']??$f['applicantSignatureName']??'')); } }
+                // progress via status.json if available
+                $progress=0; if($tid!==''){ $sd=$appsDir.DIRECTORY_SEPARATOR.preg_replace('/[^A-Za-z0-9_\-]/','_',$tid); $sp=$sd.DIRECTORY_SEPARATOR.'status.json'; if(is_file($sp)){ $st=json_decode(@file_get_contents($sp),true)?:[]; $c=0; foreach((array)($st['checks']??[]) as $v){ if($v) $c++; } $s=0; foreach((array)($st['signoffs']??[]) as $x){ if(!empty($x['signed'])) $s++; } $progress=(int)round((($c+$s)/8)*100); if($progress<0)$progress=0; if($progress>100)$progress=100; } }
+                $items[]=['tracking_id'=>$tid,'applicant'=>$applicant,'created_at'=>(string)($r->created_at??''),'status'=>(string)($r->status??''),'progress'=>$progress]; }
+        }
+        // Stream CSV
+        $headers=['Content-Type'=>'text/csv','Content-Disposition'=>'attachment; filename="applications.csv"'];
+        return response()->streamDownload(function() use($items){ $out=fopen('php://output','w'); fputcsv($out,['Tracking ID','Applicant','Created','Status','Progress']); foreach($items as $it){ $created = $it['created_at'] ?? ''; try { $created = \Carbon\Carbon::parse($created)->format('Y-m-d H:i'); } catch (\Throwable $e) {} fputcsv($out,[$it['tracking_id'],$it['applicant'],$created,$it['status'],$it['progress']]); } fclose($out); }, 'applications.csv', $headers);
+    }
+
+    public function saveFee(Request $request, string $trackingId)
+    {
+        $request->validate([
+            'total_amount' => 'required|numeric|min:0',
+        ]);
+        $appId = $this->ensurePermitAppId($trackingId);
+        if (!$appId) return back()->withErrors(['fees' => 'Database not ready.']);
+        $items = $request->input('items_json');
+        if (is_string($items)) { $decoded = json_decode($items, true); $items = is_array($decoded) ? $decoded : []; }
+        elseif (!is_array($items)) { $items = []; }
+        \App\Models\FeeAssessment::create([
+            'application_id' => $appId,
+            'items_json' => $items,
+            'total_amount' => $request->input('total_amount'),
+            'or_no' => $request->input('or_no'),
+            'notes' => $request->input('notes'),
+            'created_by' => null,
+            'created_at' => now(),
+        ]);
+        DB::table('permit_application')->where('id',$appId)->update(['status'=>'fees_bond','updated_at'=>now()]);
+        return back()->with('status','Fee assessment saved');
+    }
+
+    public function addInspection(Request $request, string $trackingId)
+    {
+        $request->validate([
+            'scheduled_at' => 'required|date',
+        ]);
+        $appId = $this->ensurePermitAppId($trackingId);
+        if (!$appId) return back()->withErrors(['inspection' => 'Database not ready.']);
+        \App\Models\Inspection::create([
+            'application_id' => $appId,
+            'scheduled_at' => $request->input('scheduled_at'),
+            'inspected_at' => $request->input('inspected_at') ?: null,
+            'inspector_id' => null,
+            'notes' => $request->input('notes'),
+            'photos' => [],
+        ]);
+        DB::table('permit_application')->where('id',$appId)->update(['status'=>'inspection','updated_at'=>now()]);
+        return back()->with('status','Inspection recorded');
     }
 }

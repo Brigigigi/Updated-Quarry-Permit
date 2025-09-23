@@ -6,9 +6,10 @@
     <title>Admin Home</title>
     <link rel="stylesheet" href="/styles.css">
     <style>
-      /* Admin dashboard grid: adapt to content width and wrap long text */
-      .admin-grid { grid-template-columns: max-content 1fr max-content minmax(180px, 1.6fr); align-items: start; }
+      /* Admin dashboard grid: 5 columns now (ID, Applicant, Created, Status, Progress) */
+      .admin-grid { grid-template-columns: max-content minmax(200px, 1.6fr) max-content max-content max-content; align-items: start; }
       .admin-grid .value, .admin-grid .label { white-space: normal; word-break: break-word; }
+      .admin-grid code { font-weight: 700; }
     </style>
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <script>
@@ -43,15 +44,17 @@
                       <button type="button" class="secondary" onclick="clearSearch()" style="min-width:auto; padding:8px 12px;">Clear</button>
                     @endif
                 </form>
+                <a href="{{ route('admin.export') }}" class="hero__admin" style="margin-left:auto;">Export CSV</a>
             </h3>
             @if(empty($apps))
                 <p style="opacity:0.8;">No applications found.</p>
             @else
             <div class="status-grid admin-grid">
                 <div class="label">Tracking ID</div>
+                <div class="label">Applicant</div>
                 <div class="label">Created</div>
+                <div class="label">Status</div>
                 <div class="label">Progress</div>
-                <div class="label">Applicant Name</div>
 
                 @foreach($apps as $a)
                     <div class="value">
@@ -59,14 +62,45 @@
                             <code>{{ $a['tracking_id'] }}</code>
                         </a>
                     </div>
-                    <div class="value">{{ $a['created_at'] ?? '—' }}</div>
-                    <div class="value">{{ (int)($a['progress'] ?? 0) }}%</div>
                     <div class="value">{{ $a['applicant_name'] ?: '—' }}</div>
+                    <div class="value">{{ $a['created_fmt'] ?? ($a['created_at'] ?? '—') }}</div>
+                    <div class="value">
+                        <span class="badge {{ $a['status_class'] ?? '' }}">{{ $a['status'] ?? '—' }}</span>
+                        @if(isset($a['latest_fee']) && is_numeric($a['latest_fee']))
+                          <span class="badge ok" style="margin-left:6px;">₱ {{ number_format((float)$a['latest_fee'],2) }}</span>
+                        @endif
+                    </div>
+                    <div class="value"><span class="badge {{ $a['progress_badge'] ?? '' }}">{{ (int)($a['progress'] ?? 0) }}%</span></div>
                 @endforeach
             </div>
             @endif
         </div>
     </div>
+    <script>
+      (function(){
+        fetch('/api/v2/applications',{headers:{'Accept':'application/json'}})
+          .then(r=>r.ok?r.json():Promise.resolve({items:[]}))
+          .then(j=>{
+            const items = Array.isArray(j.items)? j.items : [];
+            const grid = document.getElementById('appsV2');
+            const empty = document.getElementById('appsV2Empty');
+            if (!items.length){
+              empty.textContent = 'No database-backed applications yet.';
+              return;
+            }
+            empty.style.display='none';
+            items.forEach(it=>{
+              const td1 = document.createElement('div'); td1.className='value'; td1.textContent = it.tracking_id || '-';
+              const td2 = document.createElement('div'); td2.className='value'; td2.textContent = (it.created_at||'').toString().replace('T',' ').replace('Z','');
+              const td3 = document.createElement('div'); td3.className='value'; td3.textContent = it.status || '-';
+              const td4 = document.createElement('div'); td4.className='value'; td4.textContent = [it.municipality, it.province].filter(Boolean).join(', ');
+              grid.appendChild(td1); grid.appendChild(td2); grid.appendChild(td3); grid.appendChild(td4);
+            });
+          }).catch(()=>{
+            const empty = document.getElementById('appsV2Empty');
+            if (empty) empty.textContent = 'Unable to load applications.';
+          });
+      })();
+    </script>
 </body>
 </html>
-

@@ -72,6 +72,60 @@ class ApplicationFormController extends Controller
         $meta['submitted_at'] = now()->toISOString();
         @file_put_contents($metaPath, json_encode($meta));
 
+        // Phase 1: also upsert a minimal record into permit_application table
+        try {
+            $formPath = $this->appJsonPath($trackingId);
+            $form = file_exists($formPath) ? (json_decode(@file_get_contents($formPath), true) ?: []) : [];
+
+            // Map available fields from saved form
+            $municipality = (string)($form['municipality'] ?? '');
+            $province = (string)($form['province'] ?? '');
+            $barangay = (string)($form['barangay'] ?? '');
+            $sitio = (string)($form['sitio'] ?? '');
+            $island = (string)($form['island'] ?? '');
+            $area = (float)($form['approxAreaHectares'] ?? 0);
+            $resource = (string)($form['quarryResource'] ?? ($form['resource_type'] ?? ''));
+            $north = (string)($form['north_boundary'] ?? '');
+            $east = (string)($form['east_boundary'] ?? '');
+            $south = (string)($form['south_boundary'] ?? '');
+            $west = (string)($form['west_boundary'] ?? '');
+
+            // sensible defaults for phase 1
+            if ($resource === '') $resource = 'quarry';
+            if ($municipality === '') $municipality = 'Unknown';
+            if ($province === '') $province = 'Unknown';
+
+            // Upsert logic
+            if (\Illuminate\Support\Facades\Schema::hasTable('permit_application')) {
+                $existing = \Illuminate\Support\Facades\DB::table('permit_application')->where('tracking_id', $trackingId)->first();
+                $payload = [
+                    'tracking_id' => $trackingId,
+                    'resource_type' => $resource,
+                    'sitio' => $sitio,
+                    'barangay' => $barangay,
+                    'municipality' => $municipality,
+                    'province' => $province,
+                    'island' => $island,
+                    'north_boundary' => $north,
+                    'east_boundary' => $east,
+                    'south_boundary' => $south,
+                    'west_boundary' => $west,
+                    'area_hectares' => $area,
+                    'status' => 'submitted',
+                    'submitted_at' => now(),
+                    'updated_at' => now(),
+                ];
+                if (!$existing) {
+                    $payload['created_at'] = now();
+                    \Illuminate\Support\Facades\DB::table('permit_application')->insert($payload);
+                } else {
+                    \Illuminate\Support\Facades\DB::table('permit_application')->where('id', $existing->id)->update($payload);
+                }
+            }
+        } catch (\Throwable $e) {
+            // non-fatal: keep old flow working
+        }
+
         return response()->json(['message'=>'Application submitted', 'tracking_id'=>$trackingId]);
     }
 
@@ -484,6 +538,84 @@ class ApplicationFormController extends Controller
             'note' => $note,
             'permit_available' => $permitAvailable,
         ]);
+    }
+
+    // Phase 1: basic list API for submitted applications
+    public function listV2(Request $request)
+    {
+        if (!\Illuminate\Support\Facades\Schema::hasTable('permit_application')) {
+            return response()->json(['items' => []]);
+        }
+        $items = \Illuminate\Support\Facades\DB::table('permit_application')
+            ->select('id','tracking_id','app_no','resource_type','municipality','province','status','submitted_at','created_at')
+            ->orderByDesc('created_at')
+            ->limit(200)
+            ->get();
+        return response()->json(['items' => $items]);
+    }
+
+    // Record applicant payment reference; marks as paid in legacy status.json and persists to DB when available
+    public function recordPayment(Request $request)
+    {
+        $trackingId = (string) $request->input('tracking_id');
+        $method = trim((string) $request->input('method'));
+        $reference = trim((string) $request->input('reference'));
+        $amount = $request->input('amount');
+        if (!$trackingId || !$method || !$reference) {
+            return response()->json(['message'=>'tracking_id, method and reference are required'], 400);
+        }
+
+        // Update legacy status.json so the UI and admin can see Paid immediately
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $dir = storage_path('app/applications/'.$safe);
+        if (!is_dir($dir)) { @mkdir($dir, 0775, true); }
+        $statusPath = $dir.DIRECTORY_SEPARATOR.'status.json';
+        $current = file_exists($statusPath) ? (json_decode(@file_get_contents($statusPath), true) ?: []) : [];
+        $current['paid'] = true;
+        $current['payment'] = [
+            'method' => $method,
+            'reference' => $reference,
+            'amount' => is_null($amount) ? null : (float) $amount,
+            'paid_at' => now()->toISOString(),
+        ];
+        $current['updated_at'] = now()->toISOString();
+        @file_put_contents($statusPath, json_encode($current));
+
+        // Persist to DB when available
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('permit_application')) {
+                $row = \Illuminate\Support\Facades\DB::table('permit_application')->where('tracking_id',$trackingId)->first();
+                if (!$row) {
+                    // minimal submit
+                    $appId = \Illuminate\Support\Facades\DB::table('permit_application')->insertGetId([
+                        'tracking_id' => $trackingId,
+                        'resource_type' => 'quarry',
+                        'municipality' => 'Unknown',
+                        'province' => 'Unknown',
+                        'status' => 'fees_bond',
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                } else { $appId = (int) $row->id; }
+
+                // create payments table if not exists (safe-guard; normally via migration)
+                if (!\Illuminate\Support\Facades\Schema::hasTable('payment')) {
+                    // do nothing; skip DB persist
+                } else {
+                    \Illuminate\Support\Facades\DB::table('payment')->insert([
+                        'application_id' => $appId,
+                        'method' => $method,
+                        'reference' => $reference,
+                        'amount' => is_null($amount)? null : (float) $amount,
+                        'paid_at' => now(),
+                        'created_at' => now(),
+                    ]);
+                    \Illuminate\Support\Facades\DB::table('permit_application')->where('id',$appId)->update(['status'=>'fees_bond','updated_at'=>now()]);
+                }
+            }
+        } catch (\Throwable $e) { /* ignore */ }
+
+        return response()->json(['message'=>'Payment recorded','tracking_id'=>$trackingId]);
     }
 
     // List/search applications by applicant name for admin dashboard

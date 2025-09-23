@@ -34,3 +34,9 @@ Route::get('/application/permit/download', [ApplicationFormController::class, 'd
 Route::post('/application/admin-files/upload', [ApplicationFormController::class, 'uploadAdminFiles']);
 Route::get('/application/admin-files', [ApplicationFormController::class, 'adminFiles']);
 Route::get('/application/admin-files/download', [ApplicationFormController::class, 'downloadAdminFile']);
+
+// Phase 1: Minimal V2 applications list
+Route::get('/v2/applications', [ApplicationFormController::class, 'listV2']);
+
+// Applicant payment capture
+Route::post('/application/payment', [ApplicationFormController::class, 'recordPayment']);

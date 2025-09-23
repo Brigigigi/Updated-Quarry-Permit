@@ -174,8 +174,26 @@ body::before {
 /* Floating modal preview */
 .modal.hidden { display: none; }
 .modal { position: fixed; inset: 0; z-index: 50; }
-.modal__backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--sage-2), transparent 60%); backdrop-filter: blur(3px); }
-.modal__content { position: relative; z-index: 1; max-width: 560px; width: 94%; margin: 8vh auto; background: var(--surface); border-radius: 10px; box-shadow: 0 18px 40px rgba(42,42,42,0.12); border: 1px solid var(--border); }
+.modal__backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--sage-2), transparent 55%); backdrop-filter: blur(6px) saturate(120%); }
+.modal__content { position: relative; z-index: 1; max-width: 560px; width: 94%; margin: 8vh auto; background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.96)); border-radius: 14px; box-shadow: 0 28px 60px rgba(2,6,23,0.20); border: 1px solid color-mix(in srgb, var(--border), #000 8%); }
+/* Wide modal variant and stacking context */
+.modal.modal--wide { z-index: 40; }
+.modal.modal--wide .modal__content { max-width: 980px; width: 96%; }
+/* Ensure notice/preview modals stack above process modal */
+.modal#previewModal,
+.modal.modal--info,
+.modal.modal--success,
+.modal.modal--warning,
+.modal.modal--error { z-index: 70; }
+/* Classy header/body and hidden scrollbars */
+.modal__header { position: sticky; top: 0; background: linear-gradient(180deg, rgba(250,250,250,0.95), rgba(250,250,250,0.90)); display:flex; align-items:center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--border); border-top-left-radius: 14px; border-top-right-radius: 14px; backdrop-filter: blur(4px); }
+.modal__body { padding: 18px; max-height: 72vh; overflow:auto; }
+.modal__body::-webkit-scrollbar { width: 0; height:0; }
+.modal__body { scrollbar-width: none; -ms-overflow-style: none; }
+/* Hide page scrollbar when modal is open */
+body.no-scroll { overflow: hidden; }
+/* Wide modal variant */
+.modal.modal--wide .modal__content { max-width: 980px; width: 96%; }
 .modal__header { position: relative; display:flex; align-items:center; justify-content: flex-start; padding: 14px 18px; border-bottom: 1px solid #e5e7eb; }
 .modal__body { padding: 18px; max-height: 60vh; overflow:auto; }
 .modal__footer { padding: 12px 18px; border-top: 1px solid #e5e7eb; display:flex; justify-content: flex-end; gap: 10px; }

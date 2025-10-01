@@ -8,6 +8,11 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Landing Splash Overlay -->
+  <div id="landingSplash" class="splash hidden" aria-hidden="true">
+    <div class="splash__backdrop"></div>
+    <img src="Welcoming_Logo.png" alt="Welcome" class="splash__logo">
+  </div>
   <!-- Registration Page (hidden by default) -->
   <div id="registerPage" class="container hidden">
     <h2>Register</h2>
@@ -37,7 +42,7 @@
   <div id="menuPage" class="container">
     <div class="hero">
       <div class="hero__left">
-        <h1 class="hero__title">Welcome!</h1>
+        <h1 class="hero__title__welcome">Welcome!</h1>
         <p class="hero__text">Applying for a permit? This portal lets you review the requirements checklist and complete your application form digitally. Save drafts, preview your filled form, and download the final file for submission. Start by choosing what you need on the right.</p>
       </div>
       <div class="hero__right">
@@ -49,11 +54,12 @@
     </div>
   </div>
 
-  <!-- Track Application Page -->
+  <!-- Track Application Page
   <div id="trackPage" class="container hidden">
     <div class="hero">
       <div class="hero__left">
         <h1 class="hero__title">Track Your Application</h1>
+        <button class="page__close" onclick="showMenu()" aria-label="Close"> X </button>
         <p class="hero__text">Enter your tracking ID to view the current status of your application, including saved fields and uploaded documents. Keep this ID private.</p>
       </div>
       <div class="hero__right">
@@ -67,14 +73,46 @@
       </div>
     </div>
     <div id="trackResult" class="status-panel"></div>
+  </div> -->
+
+  <!-- Track Application Page -->
+<div id="trackPage" class="container hidden">
+
+  <!-- Header with title + close -->
+  <div class="page__header">
+    <h1 class="hero__title">Track Application</h1>
   </div>
+
+  <div class="hero"> 
+    <div class="hero__left">
+      <p class="hero__text">
+        Enter your tracking ID to view the current status of your application,
+        including saved fields and uploaded documents. Keep this ID private.
+      </p>
+    </div>
+    <div class="hero__right">
+      <h3 class="hero__subtitle">Check Status</h3>
+      <!-- <label for="trackIdInput">Tracking ID</label> -->
+      <input type="text" id="trackIdInput" placeholder="Tracking ID">
+      <button class="hero__btn" onclick="checkStatus()">Check</button>
+      <button class="hero__btn" onclick="openPaymentModal()">Payment Options</button>
+      <button class="hero__btn" id="downloadPermitBtn" onclick="downloadTrackedDoc()">Download Permit</button>
+      <!-- <a class="hero__admin" href="#" onclick="showMenu(); return false;">Back to Home</a> -->
+    </div>
+  </div>
+
+  <div id="trackResult" class="status-panel"></div>
+</div>
+
+
+
 
   <!-- User Checklist Page (PDF Preview) -->
   <div id="formPageUser" class="container hidden">
     <h2>Checklist Requirements</h2>
     <p>Please refer to the official checklist below:</p>
     <img src="checklist.png" alt="Checklist PDF" style="width:100%; border:1px solid #ccc;">
-    <button onclick="showMenu()">Back to Menu</button>
+    <!-- <button onclick="showMenu()">Back to Menu</button> -->
   </div>
 
   <!-- Admin Checklist Page (Interactive) -->
@@ -118,7 +156,7 @@
       <label>ISAG No.</label>
       <input type="text" id="isagNo">
 
-      <label>Province/City of (addressee)</label>
+      <label>Province/City of (addressee)</label>-
       <input type="text" id="addressedProvinceCity">
 
       <label>Application Date</label>
@@ -252,7 +290,7 @@
     <div class="modal__backdrop" onclick="closeAppActionsModal()"></div>
     <div class="modal__content">
       <div class="modal__header">
-        <h3 id="appActionsTitle">Next Steps</h3>
+        <button class="modal__close" onclick="closeAppActionsModal()" aria-label="Close">X</button>
       </div>
       <div class="modal__body">
         <p style="margin:0 0 8px;">You can preview your filled form, upload supporting documents, or submit the application.</p>
@@ -272,6 +310,7 @@
     <div class="modal__content">
       <div class="modal__header">
         <h3 id="previewTitle">Application Preview</h3>
+        <button class="modal__close" onclick="closePreview()" aria-label="Close">×</button>
       </div>
       <div id="previewBody" class="modal__body"></div>
       <div class="modal__footer">
@@ -285,6 +324,7 @@
     <div class="modal__backdrop" onclick="closeTrackingWarning()"></div>
     <div class="modal__content">
       <div class="modal__header">
+        <button class="modal__close" onclick="closeTrackingWarning()" aria-label="Close">×</button>
         <span class="modal__icon" aria-hidden="true"></span>
         <h3 id="trackingInfoTitle">Important</h3>
       </div>
@@ -304,6 +344,7 @@
     <div class="modal__backdrop" onclick="closeSubmissionModal()"></div>
     <div class="modal__content">
       <div class="modal__header">
+        <button class="modal__close" onclick="closeSubmissionModal()" aria-label="Close">×</button>
         <span class="modal__icon" aria-hidden="true"></span>
         <h3 id="submissionTitle">Thank you for your application!</h3>
       </div>
@@ -323,6 +364,7 @@
     <div class="modal__backdrop" onclick="closeProcessModal()"></div>
     <div class="modal__content">
       <div class="modal__header">
+        <button class="modal__close" onclick="closeProcessModal()" aria-label="Close">×</button>
         <h3 id="processTitle"></h3>
       </div>
       <div id="processBody" class="modal__body"></div>
@@ -334,6 +376,7 @@
     <div class="modal__backdrop" onclick="closePaymentModal()"></div>
     <div class="modal__content">
       <div class="modal__header">
+        <button class="modal__close" onclick="closePaymentModal()" aria-label="Close">×</button>
         <h3 id="paymentTitle">Payment Options</h3>
       </div>
       <div class="modal__body">
@@ -366,6 +409,7 @@
     <div class="modal__backdrop" onclick="closeValidationModal()"></div>
     <div class="modal__content">
       <div class="modal__header">
+        <button class="modal__close" onclick="closeValidationModal()" aria-label="Close">×</button>
         <span class="modal__icon" aria-hidden="true"></span>
         <h3 id="validationTitle">Missing Required Fields</h3>
       </div>

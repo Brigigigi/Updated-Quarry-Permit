@@ -5,9 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Application {{ $tracking_id }}</title>
     <link rel="stylesheet" href="/styles.css">
+<style>
+  /* minor tweaks for section anchors */
+  .section-anchor { scroll-margin-top: 16px; }
+</style>
 </head>
 <body>
-    <div class="container">
+  <div class="admin-frame">
+    <aside class="admin-sidebar">
+      <div class="brand">Quarry Admin</div>
+      <div class="sub">{{ session('username') }}</div>
+      <nav class="nav">
+        <a href="{{ route('admin.home') }}">Dashboard</a>
+        <a href="#overview">Overview</a>
+        <a href="#review">Admin Review</a>
+        <a href="#fees">Fee Assessment</a>
+        <a href="#inspection">Inspection</a>
+        <a href="#bond">Bond</a>
+        <a href="#board">Board Action</a>
+        <a href="#permit">Grant Permit</a>
+        <a href="#form">Form Fields</a>
+        <a href="#adminfiles">Admin Files</a>
+        <a href="#files">Applicant Files</a>
+      </nav>
+    </aside>
+    <main class="admin-main">
+    <div class="container container--wide">
         <div class="hero">
             <div class="hero__left">
                 <h1 class="hero__title">Application</h1>
@@ -17,7 +40,6 @@
             <div class="hero__right">
                 <h3 class="hero__subtitle">Progress</h3>
                 <div class="progress"><div class="progress__bar" style="width: {{ $percent }}%"></div><span class="progress__text">{{ $percent }}% (Auto)</span></div>
-                <a href="{{ route('admin.home') }}" class="hero__admin">Back to Dashboard</a>
             </div>
         </div>
 
@@ -25,8 +47,10 @@
             <div style="margin-top:12px; color:#166534; background:#dcfce7; padding:8px 12px; border-radius:8px;">{{ session('status') }}</div>
         @endif
 
+        
+
         @if(!empty($db['bond']) || !empty($db['board']) || !empty($db['permit']))
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="overview" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Current Records (DB)</h3>
             <div class="status-grid" style="grid-template-columns: 1fr 2fr;">
                 @if(!empty($db['bond']))
@@ -61,7 +85,7 @@
         </div>
         @endif
 
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="review" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Admin Review</h3>
             <form method="POST" action="{{ route('admin.app.update', ['trackingId'=>$tracking_id]) }}" style="display:grid; gap:10px;">
                 @csrf
@@ -102,7 +126,7 @@
         </div>
 
         <!-- Fee Assessment -->
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="fees" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Fee Assessment</h3>
             @if($errors->first('fees'))
               <div class="note-box" style="border-color:#ef4444; color:#991b1b; background:#fee2e2;">{{ $errors->first('fees') }}</div>
@@ -181,7 +205,7 @@
         </script>
 
         <!-- Inspection -->
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="inspection" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Inspection</h3>
             @if($errors->first('inspection'))
               <div class="note-box" style="border-color:#ef4444; color:#991b1b; background:#fee2e2;">{{ $errors->first('inspection') }}</div>
@@ -214,7 +238,7 @@
             @endif
         </div>
         <!-- Bond -->
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="bond" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Bond</h3>
             @if($errors->first('bond'))
               <div class="note-box" style="border-color:#ef4444; color:#991b1b; background:#fee2e2;">{{ $errors->first('bond') }}</div>
@@ -257,7 +281,7 @@
         </div>
 
         <!-- Board Action -->
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="board" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Board Action</h3>
             @if($errors->first('board'))
               <div class="note-box" style="border-color:#ef4444; color:#991b1b; background:#fee2e2;">{{ $errors->first('board') }}</div>
@@ -286,7 +310,7 @@
         </div>
 
         <!-- Grant Permit -->
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="permit" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Grant Permit</h3>
             @if($errors->first('permit'))
               <div class="note-box" style="border-color:#ef4444; color:#991b1b; background:#fee2e2;">{{ $errors->first('permit') }}</div>
@@ -310,7 +334,7 @@
             @endif
         </div>
 
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="form" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Form Fields</h3>
             <div class="status-grid">
                 @php
@@ -325,7 +349,7 @@
             </div>
         </div>
 
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="adminfiles" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Admin Provided Files</h3>
             <div style="margin:8px 0;" id="adminUploadBar">
                 <button type="button" onclick="adminTriggerRefUpload()">Upload Files for Applicant</button>
@@ -341,7 +365,7 @@
             </ul>
         </div>
 
-        <div class="status-panel" style="margin-top:16px;">
+        <div id="files" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Applicant Uploaded Files</h3>
             <ul>
                 @forelse($files as $f)
@@ -352,6 +376,8 @@
             </ul>
         </div>
     </div>
+    </main>
+  </div>
     <script>
       function adminTriggerRefUpload(){
         let input = document.getElementById('adminRefUploadFiles');
@@ -407,6 +433,71 @@
         // Auto-refresh to reflect 'Permit Available' checkbox and status
         location.reload();
       }
+    </script>
+    <script>
+      // Sidebar: show only the clicked section
+      (function(){
+        const sectionIds = ['overview','review','fees','inspection','bond','board','permit','form','adminfiles','files'];
+        const panels = new Map(sectionIds.map(id => [id, document.getElementById(id)]));
+        const links = Array.from(document.querySelectorAll('.admin-sidebar .nav a[href^="#"]'));
+
+        function setActive(id){
+          links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + id));
+        }
+
+        function showOnly(id){
+          panels.forEach((el, key) => { if (el) el.style.display = (key === id) ? '' : 'none'; });
+          setActive(id);
+        }
+
+        function placeDefaultPair(){
+          const over = document.getElementById('overview');
+          const form = document.getElementById('form');
+          if (over && form){
+            if (over.parentElement && over.parentElement.id === 'defaultPair') return; // already grouped
+            const container = document.createElement('div');
+            container.className = 'admin-two-col';
+            container.id = 'defaultPair';
+            const parent = over.parentNode;
+            parent.insertBefore(container, over);
+            container.appendChild(over);
+            container.appendChild(form);
+          }
+        }
+
+        function showDefault(){
+          // Show overview + form together if both exist; else show whichever exists
+          const over = document.getElementById('overview');
+          const form = document.getElementById('form');
+          panels.forEach((el) => { if (el) el.style.display = 'none'; });
+          if (over) over.style.display = '';
+          if (form) form.style.display = '';
+          // no active highlight for combined view
+        }
+
+        links.forEach(a => {
+          a.addEventListener('click', (e) => {
+            const href = a.getAttribute('href') || '';
+            if (!href.startsWith('#')) return;
+            e.preventDefault();
+            const target = href.slice(1);
+            if (panels.has(target)){
+              showOnly(target);
+              history.replaceState(null, '', '#' + target);
+            }
+          });
+        });
+
+        // Arrange overview + form side-by-side for default
+        placeDefaultPair();
+
+        const initial = (location.hash || '').slice(1);
+        if (panels.has(initial)) {
+          showOnly(initial);
+        } else {
+          showDefault();
+        }
+      })();
     </script>
 </body>
 </html>

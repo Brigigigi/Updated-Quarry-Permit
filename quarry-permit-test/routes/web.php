@@ -42,6 +42,11 @@ Route::post('/home/admin/app/{trackingId}', [AdminApplicationController::class, 
     ->middleware(['web','is_admin'])
     ->name('admin.app.update');
 
+// Delete application (admin)
+Route::delete('/home/admin/app/{trackingId}', [AdminApplicationController::class, 'destroy'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.delete');
+
 // Admin actions: bond, board, grant permit
 Route::post('/home/admin/app/{trackingId}/bond', [AdminApplicationController::class, 'saveBond'])
     ->middleware(['web','is_admin'])

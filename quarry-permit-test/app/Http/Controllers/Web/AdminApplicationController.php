@@ -15,6 +15,19 @@ use Carbon\Carbon;
 
 class AdminApplicationController extends Controller
 {
+    private function rrmdir(string $dir): void
+    {
+        if (!is_dir($dir)) return;
+        $items = scandir($dir);
+        if ($items === false) return;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') continue;
+            $path = $dir.DIRECTORY_SEPARATOR.$item;
+            if (is_dir($path)) { $this->rrmdir($path); }
+            else { @unlink($path); }
+        }
+        @rmdir($dir);
+    }
     private function getPlaceholders(): array
     {
         $templatePath = public_path('mgbform8-1A.docx');
@@ -195,6 +208,28 @@ class AdminApplicationController extends Controller
                 ];
             }
         }
+
+        // De-duplicate by tracking_id; prefer DB record when both exist
+        $byTid = [];
+        foreach ($items as $row) {
+            $tid = (string)($row['tracking_id'] ?? '');
+            if ($tid === '') continue;
+            if (!isset($byTid[$tid])) { $byTid[$tid] = $row; continue; }
+            $existing = $byTid[$tid];
+            $existingSource = (string)($existing['source'] ?? '');
+            $rowSource = (string)($row['source'] ?? '');
+            if ($existingSource !== 'db' && $rowSource === 'db') {
+                // prefer db; keep missing fields from legacy if db lacks them
+                if (empty($row['applicant_name'] ?? '') && !empty($existing['applicant_name'] ?? '')) {
+                    $row['applicant_name'] = $existing['applicant_name'];
+                }
+                if (!isset($row['progress']) && isset($existing['progress'])) {
+                    $row['progress'] = $existing['progress'];
+                }
+                $byTid[$tid] = $row;
+            }
+        }
+        $items = array_values($byTid);
 
         // Add a simple progress badge class
         foreach ($items as &$it) {
@@ -630,5 +665,45 @@ class AdminApplicationController extends Controller
         ]);
         DB::table('permit_application')->where('id',$appId)->update(['status'=>'inspection','updated_at'=>now()]);
         return back()->with('status','Inspection recorded');
+    }
+
+    public function destroy(Request $request, string $trackingId)
+    {
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+
+        // Remove file-based storage
+        $appDir = storage_path('app/applications/'.$safe);
+        $uploadsDir = storage_path('app/application_uploads/'.$safe);
+        $adminUploadsDir = storage_path('app/public/admin_uploads/'.$safe);
+        $this->rrmdir($appDir);
+        $this->rrmdir($uploadsDir);
+        $this->rrmdir($adminUploadsDir);
+
+        // Remove DB records if present
+        if (Schema::hasTable('permit_application')) {
+            $appRow = DB::table('permit_application')->where('tracking_id', $trackingId)->first();
+            if ($appRow) {
+                $appId = (int) $appRow->id;
+                // Delete children first
+                if (Schema::hasTable('fee_assessment')) {
+                    DB::table('fee_assessment')->where('application_id', $appId)->delete();
+                }
+                if (Schema::hasTable('inspection')) {
+                    DB::table('inspection')->where('application_id', $appId)->delete();
+                }
+                if (Schema::hasTable('board_action')) {
+                    DB::table('board_action')->where('application_id', $appId)->delete();
+                }
+                if (Schema::hasTable('bond')) {
+                    DB::table('bond')->where('application_id', $appId)->delete();
+                }
+                if (Schema::hasTable('permit')) {
+                    DB::table('permit')->where('application_id', $appId)->delete();
+                }
+                DB::table('permit_application')->where('id', $appId)->delete();
+            }
+        }
+
+        return redirect()->route('admin.home')->with('status', 'Application deleted');
     }
 }

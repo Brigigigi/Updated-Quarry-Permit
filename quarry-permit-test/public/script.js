@@ -72,6 +72,116 @@ function validateApplicationCompleteness(){
     return { ok: missing.length === 0, missing, firstId };
 }
 
+// ------------------- Landing Splash (welcome logo) -------------------
+function showLandingSplash() {
+  const el = document.getElementById('landingSplash');
+  if (!el) return;
+  try { document.body.classList.add('no-scroll'); } catch(_) {}
+  // Reveal and fade in
+  el.classList.remove('hidden');
+  requestAnimationFrame(() => el.classList.add('is-visible'));
+  // Show for 2s, then fade out and hide
+  setTimeout(() => {
+    el.classList.remove('is-visible');
+    setTimeout(() => {
+      el.classList.add('hidden');
+      try { document.body.classList.remove('no-scroll'); } catch(_) {}
+    }, 320); // allow fade-out to complete
+  }, 2000);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    if (typeof isOnMenuView === 'function') {
+      if (isOnMenuView()) showLandingSplash();
+    } else {
+      showLandingSplash();
+    }
+  } catch (_) {
+    showLandingSplash();
+  }
+});
+
+// ---- Admin: mark New Applications card with alert animation ----
+// Usage: markNewApplicationsAlert(true/false)
+function markNewApplicationsAlert(hasNew) {
+  const nodes = document.querySelectorAll('[data-card="new-apps"], #newApplicationsCard, .dash-card[data-filter="new"]');
+  if (!nodes || nodes.length === 0) return;
+  nodes.forEach(el => el.classList.toggle('dash-card--alert', !!hasNew));
+}
+
+// Auto-detect based on count in the card (.value text or data-count)
+function applyNewApplicationsAlertAuto() {
+  const nodes = document.querySelectorAll('[data-card="new-apps"], #newApplicationsCard, .dash-card[data-filter="new"]');
+  nodes.forEach(card => {
+    let count = 0;
+    const v = card.querySelector('.value');
+    if (v) {
+      const n = parseInt(String(v.textContent || '').replace(/[^0-9]/g, ''), 10);
+      if (!Number.isNaN(n)) count = n;
+    }
+    const attr = card.getAttribute('data-count');
+    if (attr && !Number.isNaN(parseInt(attr, 10))) count = parseInt(attr, 10);
+    card.classList.toggle('dash-card--alert', count > 0);
+  });
+}
+
+// Observe DOM for the card and react to count changes
+(function setupNewAppsAlertObserver(){
+  const SELECTOR = '[data-card="new-apps"], #newApplicationsCard, .dash-card[data-filter="new"], .dash-card .title';
+
+  function findNewCards() {
+    const set = new Set();
+    // Direct matches
+    document.querySelectorAll('[data-card="new-apps"], #newApplicationsCard, .dash-card[data-filter="new"]').forEach(n => set.add(n));
+    // Fallback: match by title text
+    document.querySelectorAll('.dash-card .title').forEach(t => {
+      const txt = String(t.textContent || '').toLowerCase().trim();
+      if (txt.includes('new applications')) {
+        const card = t.closest('.dash-card');
+        if (card) set.add(card);
+      }
+    });
+    return Array.from(set);
+  }
+
+  function getCount(card){
+    let count = 0;
+    const v = card.querySelector('.value');
+    if (v){
+      const n = parseInt(String(v.textContent || '').replace(/[^0-9]/g, ''), 10);
+      if (!Number.isNaN(n)) count = n;
+    }
+    const attr = card.getAttribute('data-count');
+    if (attr && !Number.isNaN(parseInt(attr, 10))) count = parseInt(attr, 10);
+    return count;
+  }
+
+  function update(card){
+    card.classList.toggle('dash-card--alert', getCount(card) > 0);
+  }
+
+  function attach(card){
+    if (!card || card.dataset.newAppsObserved) return;
+    card.dataset.newAppsObserved = '1';
+    update(card);
+    const valueEl = card.querySelector('.value') || card;
+    const obs = new MutationObserver(() => update(card));
+    obs.observe(valueEl, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-count'] });
+  }
+
+  function scan(){ findNewCards().forEach(attach); }
+
+  // Initial scans
+  window.addEventListener('DOMContentLoaded', () => { scan(); setTimeout(scan, 300); setTimeout(scan, 1000); });
+
+  // Watch for dynamically added cards
+  const rootObs = new MutationObserver(() => scan());
+  if (document && document.body) rootObs.observe(document.body, { childList: true, subtree: true });
+  // Periodic safety check in case mutations are missed
+  setInterval(scan, 2000);
+})();
+
 // ------------------- PAGE NAVIGATION -------------------
 function togglePages(showId) {
     const pages = ['registerPage','loginPage','menuPage','formPageUser','formPageAdmin','formApplicationUser','trackPage','appActionsPage'];
@@ -181,7 +291,7 @@ function showTrack() {
   if (isOnMenuView()) { openProcessModal('trackPage', 'Track Application'); }
   else { togglePages('trackPage'); }
 
-  const tid = sessionStorage.getItem('tracking_id') || '';
+//   const tid = sessionStorage.getItem('tracking_id') || '';
   const input = document.getElementById('trackIdInput');
   if (tid && input && !input.value) input.value = tid;
   if (input && input.value.trim()) { checkStatus(); }
@@ -274,24 +384,20 @@ document.addEventListener('keydown', (ev) => {
 
 // Proceed from application form to the actions page
 async function showAppActions(){
-  // Validate completeness before proceeding
+  // Save as draft regardless of completeness; submission is validated separately
+  try {
+    await saveApplication();
+    notify('Draft saved');
+  } catch(_) { /* ignore save errors here; allow viewing actions */ }
+
+  // Optional: surface missing fields info without blocking flow
   const check = validateApplicationCompleteness();
-  if (!check.ok) {
-    if (typeof showValidationModal === 'function') {
-      showValidationModal(check.missing);
-    } else {
-      alert(`Please complete all fields before proceeding. Missing: ${check.missing.slice(0,3).join(', ')}${check.missing.length>3?'...':''}`);
-    }
-    const first = document.getElementById(check.firstId);
-    if (first) first.focus();
-    return;
+  if (!check.ok && typeof showValidationModal === 'function') {
+    // Non-blocking hint; admin submission will still require completion
+    showValidationModal(check.missing);
   }
 
-  try {
-    await saveApplication(true);
-  } catch(_) { /* ignore, still navigate */ }
-
-  // Prefer modal popup for actions
+  // Open actions modal (preview, uploads, submit)
   openAppActionsModal();
 }
 
@@ -304,6 +410,20 @@ function closeAppActionsModal(){
   const m = document.getElementById('appActionsModal');
   if (m) m.classList.add('hidden');
 }
+
+// Trap focus inside modal for accessibility
+document.addEventListener('focusin', (e) => {
+  const openModal = document.querySelector('.modal:not(.hidden) .modal__content');
+  if (!openModal) return;
+  if (!openModal.contains(e.target)) {
+    e.stopPropagation();
+    const focusable = openModal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length) focusable[0].focus();
+  }
+});
+
 
 // Final submit flow
 async function submitApplication(){
@@ -331,6 +451,8 @@ async function submitApplication(){
 
   // Close actions modal if open
   closeAppActionsModal();
+  // Also close the process modal (application/checklist container)
+  try { closeProcessModal(); } catch(_) {}
   // Navigate back to landing and reset form state
   togglePages('menuPage');
   clearApplicationForm();

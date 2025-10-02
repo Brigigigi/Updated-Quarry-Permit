@@ -134,9 +134,18 @@ class AdminApplicationController extends Controller
                 if (is_string($createdAt) && $createdAt !== '') {
                     try { $createdFmt = Carbon::parse($createdAt)->format('Y-m-d H:i'); } catch (\Throwable $e) { $createdFmt = str_replace(['T','Z'],' ', $createdAt); }
                 }
+                // Check if paid from status.json (same file we already loaded above)
+                $isPaidLegacy = false;
+                if ($statusPath && is_file($statusPath)) {
+                    $adminStatusLegacy = json_decode(@file_get_contents($statusPath), true) ?: [];
+                    $isPaidLegacy = (bool)($adminStatusLegacy['paid'] ?? false);
+                }
                 // map status to a badge class
                 $status = $isSubmitted ? 'submitted' : 'draft';
-                $statusClass = in_array($status, ['approved']) ? 'ok' : (in_array($status, ['denied','draft']) ? 'warn' : 'info');
+                if ($isPaidLegacy && !in_array($status, ['approved', 'denied'])) {
+                    $status = 'paid';
+                }
+                $statusClass = in_array($status, ['approved','paid']) ? 'ok' : (in_array($status, ['denied','draft']) ? 'warn' : 'info');
 
                 $items[] = [
                     'tracking_id' => $trackingId,
@@ -147,6 +156,7 @@ class AdminApplicationController extends Controller
                     'progress' => $progress,
                     'applicant_name' => $applicantName,
                     'source' => 'legacy',
+                    'is_paid' => $isPaidLegacy,
                 ];
             }
         }
@@ -191,20 +201,35 @@ class AdminApplicationController extends Controller
                     $latestFee = DB::table('fee_assessment')->where('application_id', $r->id)->orderByDesc('created_at')->value('total_amount');
                 } catch (\Throwable $e) { $latestFee = null; }
 
-                // status badge class for DB rows
+                // Check if paid from status.json
+                $isPaid = false;
+                if ($tid !== '') {
+                    $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $tid);
+                    $statusPath = $appsDir.DIRECTORY_SEPARATOR.$safe.DIRECTORY_SEPARATOR.'status.json';
+                    if (is_file($statusPath)) {
+                        $adminStatus = json_decode(@file_get_contents($statusPath), true) ?: [];
+                        $isPaid = (bool)($adminStatus['paid'] ?? false);
+                    }
+                }
+
+                // status badge class for DB rows - prioritize 'paid' status
                 $s = (string) ($r->status ?? '');
-                $statusClass = in_array($s, ['approved']) ? 'ok' : (in_array($s, ['denied','draft']) ? 'warn' : 'info');
+                if ($isPaid && $s !== 'approved' && $s !== 'denied') {
+                    $s = 'paid';
+                }
+                $statusClass = in_array($s, ['approved','paid']) ? 'ok' : (in_array($s, ['denied','draft']) ? 'warn' : 'info');
 
                 $items[] = [
                     'tracking_id' => $tid,
                     'created_at' => $dbCreated,
                     'created_fmt' => $dbCreatedFmt,
-                    'status' => (string) ($r->status ?? ''),
+                    'status' => $s,
                     'status_class' => $statusClass,
                     'progress' => $progress,
                     'applicant_name' => $applicantName,
                     'source' => 'db',
                     'latest_fee' => $latestFee,
+                    'is_paid' => $isPaid,
                 ];
             }
         }

@@ -529,6 +529,37 @@ class ApplicationFormController extends Controller
 
         // Final permit availability is admin-controlled flag in status.json
         $permitAvailable = (bool)($adminStatus['permit_available'] ?? false);
+
+        // Check payment status from status.json
+        $isPaid = (bool)($adminStatus['paid'] ?? false);
+        $paymentInfo = $adminStatus['payment'] ?? null;
+
+        // Load fee assessment from database
+        $feeAmount = null;
+        $feeDetails = null;
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('permit_application') && \Illuminate\Support\Facades\Schema::hasTable('fee_assessment')) {
+                $appRow = \Illuminate\Support\Facades\DB::table('permit_application')->where('tracking_id', $trackingId)->first();
+                if ($appRow) {
+                    $latestFee = \Illuminate\Support\Facades\DB::table('fee_assessment')
+                        ->where('application_id', $appRow->id)
+                        ->orderByDesc('created_at')
+                        ->first();
+                    if ($latestFee) {
+                        $feeAmount = (float)$latestFee->total_amount;
+                        $feeDetails = [
+                            'total_amount' => (float)$latestFee->total_amount,
+                            'or_no' => $latestFee->or_no ?? null,
+                            'notes' => $latestFee->notes ?? null,
+                            'items' => is_string($latestFee->items_json) ? json_decode($latestFee->items_json, true) : $latestFee->items_json,
+                        ];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Ignore if tables don't exist or query fails
+        }
+
         return response()->json([
             'tracking_id' => $trackingId,
             'has_form' => !empty($form),
@@ -537,6 +568,10 @@ class ApplicationFormController extends Controller
             'progress' => $progress,
             'note' => $note,
             'permit_available' => $permitAvailable,
+            'fee_amount' => $feeAmount,
+            'fee_details' => $feeDetails,
+            'is_paid' => $isPaid,
+            'payment_info' => $paymentInfo,
         ]);
     }
 

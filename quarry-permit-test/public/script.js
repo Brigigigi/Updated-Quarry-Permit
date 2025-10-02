@@ -291,7 +291,7 @@ function showTrack() {
   if (isOnMenuView()) { openProcessModal('trackPage', 'Track Application'); }
   else { togglePages('trackPage'); }
 
-//   const tid = sessionStorage.getItem('tracking_id') || '';
+  const tid = sessionStorage.getItem('tracking_id') || '';
   const input = document.getElementById('trackIdInput');
   if (tid && input && !input.value) input.value = tid;
   if (input && input.value.trim()) { checkStatus(); }
@@ -1304,6 +1304,37 @@ async function checkStatus(){
     add('Form', badge1);
     add('Fields Filled', String(res.fields_filled || 0));
     add('Files Uploaded', String(res.files_uploaded || 0));
+
+    // Display fee amount if available
+    if (res.fee_amount !== null && res.fee_amount !== undefined) {
+        const feeText = `₱${Number(res.fee_amount).toLocaleString('en-PH', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        const feeBadge = document.createElement('span');
+        feeBadge.className = 'badge info';
+        feeBadge.textContent = feeText;
+        add('Fee Assessment', feeBadge);
+    }
+
+    // Display payment status
+    if (res.is_paid) {
+        const paidBadge = document.createElement('span');
+        paidBadge.className = 'badge ok';
+        paidBadge.textContent = 'Paid';
+        add('Payment Status', paidBadge);
+
+        // Hide Stripe payment button if already paid
+        const stripeBtn = document.getElementById('stripePayBtn');
+        if (stripeBtn) stripeBtn.style.display = 'none';
+    } else if (res.fee_amount !== null && res.fee_amount !== undefined && res.fee_amount > 0) {
+        const unpaidBadge = document.createElement('span');
+        unpaidBadge.className = 'badge warn';
+        unpaidBadge.textContent = 'Unpaid';
+        add('Payment Status', unpaidBadge);
+
+        // Show Stripe payment button if fee is set and unpaid
+        const stripeBtn = document.getElementById('stripePayBtn');
+        if (stripeBtn) stripeBtn.style.display = 'inline-block';
+    }
+
     add('Permit', (res.permit_available ? 'Available' : 'Not available'));
 
     panel.appendChild(grid);
@@ -1373,4 +1404,81 @@ function validateApplicationCompleteness(){
         }
     });
     return { ok: missing.length === 0, missing, firstId };
+}
+
+// ========== STRIPE PAYMENT ==========
+
+// Store current tracking ID for payment
+let currentTrackingIdForPayment = null;
+
+// Check payment status on page load (from URL params)
+window.addEventListener('DOMContentLoaded', async function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentStatus = urlParams.get('payment');
+    const trackingId = urlParams.get('tracking_id');
+    const sessionId = urlParams.get('session_id');
+
+    if (paymentStatus === 'success' && trackingId && sessionId) {
+        // Verify payment with backend
+        try {
+            const res = await safeFetch('/api/stripe/verify-payment', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tracking_id: trackingId, session_id: sessionId })
+            });
+
+            if (res.status === 'paid') {
+                notify('Payment successful! Your application fee has been paid.', 'success');
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+
+                // Auto-check status if on track page
+                const trackIdInput = document.getElementById('trackIdInput');
+                if (trackIdInput) {
+                    trackIdInput.value = trackingId;
+                    showTrack();
+                    setTimeout(() => checkStatus(), 500);
+                }
+            }
+        } catch (err) {
+            console.error('Payment verification error:', err);
+            notify('Payment verification failed. Please contact support.', 'error');
+        }
+    } else if (paymentStatus === 'cancelled' && trackingId) {
+        notify('Payment cancelled. You can try again anytime.', 'info');
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+});
+
+async function payWithStripe() {
+    const input = document.getElementById('trackIdInput');
+    const trackingId = (input?.value || '').trim();
+
+    if (!trackingId) {
+        alert('Please enter your tracking ID first and check status');
+        return;
+    }
+
+    try {
+        notify('Creating payment session...', 'info');
+
+        // Create Stripe checkout session
+        const res = await safeFetch('/api/stripe/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tracking_id: trackingId })
+        });
+
+        if (res.url) {
+            // Redirect to Stripe Checkout
+            window.location.href = res.url;
+        } else {
+            throw new Error('No payment URL received');
+        }
+    } catch (err) {
+        console.error('Stripe payment error:', err);
+        const message = err.message || 'Failed to create payment session';
+        notify('Payment error: ' + message, 'error');
+    }
 }

@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\UserController;
 use App\Http\Controllers\API\ChecklistController;
 use App\Http\Controllers\API\ApplicationFormController;
+use App\Http\Controllers\API\StripePaymentController;
 
 // Authentication
 Route::post('/register', [UserController::class, 'register']);
@@ -40,3 +41,8 @@ Route::get('/v2/applications', [ApplicationFormController::class, 'listV2']);
 
 // Applicant payment capture
 Route::post('/application/payment', [ApplicationFormController::class, 'recordPayment']);
+
+// Stripe Payment
+Route::post('/stripe/create-checkout-session', [StripePaymentController::class, 'createCheckoutSession']);
+Route::post('/stripe/verify-payment', [StripePaymentController::class, 'verifyPayment']);
+Route::get('/stripe/public-key', [StripePaymentController::class, 'getPublicKey']);

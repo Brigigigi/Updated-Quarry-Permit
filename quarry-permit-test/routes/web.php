@@ -30,6 +30,9 @@ Route::post('/admin/logout', [AdminAuthController::class, 'logout'])->name('admi
 Route::get('/home/admin', [AdminApplicationController::class, 'index'])
     ->middleware(['web','is_admin'])
     ->name('admin.home');
+Route::get('/home/admin/export.csv', [AdminApplicationController::class, 'export'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.export');
 
 Route::get('/home/admin/app/{trackingId}', [AdminApplicationController::class, 'show'])
     ->middleware(['web','is_admin'])
@@ -38,3 +41,25 @@ Route::get('/home/admin/app/{trackingId}', [AdminApplicationController::class, '
 Route::post('/home/admin/app/{trackingId}', [AdminApplicationController::class, 'update'])
     ->middleware(['web','is_admin'])
     ->name('admin.app.update');
+
+// Delete application (admin)
+Route::delete('/home/admin/app/{trackingId}', [AdminApplicationController::class, 'destroy'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.delete');
+
+// Admin actions: bond, board, grant permit
+Route::post('/home/admin/app/{trackingId}/bond', [AdminApplicationController::class, 'saveBond'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.bond');
+Route::post('/home/admin/app/{trackingId}/board', [AdminApplicationController::class, 'saveBoardAction'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.board');
+Route::post('/home/admin/app/{trackingId}/grant', [AdminApplicationController::class, 'grantPermit'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.grant');
+Route::post('/home/admin/app/{trackingId}/fees', [AdminApplicationController::class, 'saveFee'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.fees');
+Route::post('/home/admin/app/{trackingId}/inspection', [AdminApplicationController::class, 'addInspection'])
+    ->middleware(['web','is_admin'])
+    ->name('admin.app.inspection');

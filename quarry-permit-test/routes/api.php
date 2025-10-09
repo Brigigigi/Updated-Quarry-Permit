@@ -36,6 +36,9 @@ Route::post('/application/admin-files/upload', [ApplicationFormController::class
 Route::get('/application/admin-files', [ApplicationFormController::class, 'adminFiles']);
 Route::get('/application/admin-files/download', [ApplicationFormController::class, 'downloadAdminFile']);
 
+Route::post('/application/admin-files/rename', [ApplicationFormController::class, 'renameAdminFile']);
+Route::post('/application/admin-files/delete', [ApplicationFormController::class, 'deleteAdminFile']);
+
 // Phase 1: Minimal V2 applications list
 Route::get('/v2/applications', [ApplicationFormController::class, 'listV2']);
 
@@ -46,3 +49,4 @@ Route::post('/application/payment', [ApplicationFormController::class, 'recordPa
 Route::post('/stripe/create-checkout-session', [StripePaymentController::class, 'createCheckoutSession']);
 Route::post('/stripe/verify-payment', [StripePaymentController::class, 'verifyPayment']);
 Route::get('/stripe/public-key', [StripePaymentController::class, 'getPublicKey']);
+

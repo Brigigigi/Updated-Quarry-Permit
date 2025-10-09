@@ -3,11 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Application {{ $tracking_id }}</title>
     <link rel="stylesheet" href="/styles.css">
 <style>
   /* minor tweaks for section anchors */
   .section-anchor { scroll-margin-top: 16px; }
+  .nav__action { display:block; width:100%; margin-top:8px; padding:8px 12px; background:#1d4ed8; color:#fff; border:none; border-radius:6px; text-align:center; cursor:pointer; font-weight:600; }
+  .nav__action:hover { background:#1e40af; }
+  .admin-files-list { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
+  .admin-files-list__item { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .admin-file__meta { margin-left:8px; font-size:0.85rem; color:#4b5563; }
+  .admin-file__actions button { margin-left:6px; }
 </style>
 </head>
 <body>
@@ -26,6 +33,7 @@
         <a href="#permit">Grant Permit</a>
         <a href="#form">Form Fields</a>
         <a href="#adminfiles">Admin Files</a>
+        <button type="button" class="nav__action" onclick="adminDownloadDoc()">Generate Permit</button>
         <a href="#files">Applicant Files</a>
       </nav>
     </aside>
@@ -128,18 +136,40 @@
         <!-- Fee Assessment -->
         <div id="fees" class="status-panel section-anchor" style="margin-top:16px;">
             <h3 style="margin-top:0;">Fee Assessment</h3>
+            @php
+                $editingFee = $editFee ?? null;
+                $currentFeeId = old('fee_id', $editingFee->id ?? '');
+                $oldItemsJson = old('items_json');
+                $feeItemsPreset = [];
+                if (is_string($oldItemsJson) && $oldItemsJson !== '') {
+                    $decodedOld = json_decode($oldItemsJson, true);
+                    if (is_array($decodedOld)) {
+                        $feeItemsPreset = $decodedOld;
+                    }
+                } elseif ($editingFee) {
+                    $feeItemsPreset = $editingFee->items_json ?? [];
+                }
+                $feeItemsJson = json_encode($feeItemsPreset ?: []);
+            @endphp
             @if($errors->first('fees'))
               <div class="note-box" style="border-color:#ef4444; color:#991b1b; background:#fee2e2;">{{ $errors->first('fees') }}</div>
             @endif
+            @if($editingFee)
+              <div class="note-box" style="background:#dbeafe; border-color:#3b82f6; color:#1e3a8a; display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <span>Editing fee assessment recorded {{ optional($editingFee->created_at)->format('Y-m-d H:i') ?? 'previously' }}.</span>
+                <a href="{{ route('admin.app.show', ['trackingId'=>$tracking_id]) }}#fees" class="secondary">Start new</a>
+              </div>
+            @endif
             <form id="feeForm" method="POST" action="{{ route('admin.app.fees', ['trackingId'=>$tracking_id]) }}" style="display:grid; gap:10px;">
                 @csrf
+                <input type="hidden" name="fee_id" value="{{ $currentFeeId }}">
                 <div class="status-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
                     <div class="label">Total Amount</div>
-                    <div class="value"><input type="number" id="feeTotal" name="total_amount" step="0.01" required value="{{ old('total_amount') }}"></div>
+                    <div class="value"><input type="number" id="feeTotal" name="total_amount" step="0.01" required value="{{ old('total_amount', $editingFee->total_amount ?? '') }}"></div>
                     <div class="label">OR No.</div>
-                    <div class="value"><input type="text" name="or_no" value="{{ old('or_no') }}"></div>
+                    <div class="value"><input type="text" name="or_no" value="{{ old('or_no', $editingFee->or_no ?? '') }}"></div>
                     <div class="label">Notes</div>
-                    <div class="value" style="grid-column: span 3;"><input type="text" name="notes" value="{{ old('notes') }}"></div>
+                    <div class="value" style="grid-column: span 3;"><input type="text" name="notes" value="{{ old('notes', $editingFee->notes ?? '') }}"></div>
                     <div class="label">Items</div>
                     <div class="value" style="grid-column: span 3;">
                       <table id="feeItemsTable" style="width:100%; border-collapse:collapse;">
@@ -149,29 +179,64 @@
                         <tbody></tbody>
                       </table>
                       <button type="button" class="secondary" id="addFeeItem" style="margin-top:8px;">Add Item</button>
-                      <input type="hidden" name="items_json" id="items_json">
+                      <input type="hidden" name="items_json" id="items_json" value="{{ old('items_json', $feeItemsJson) }}">
                     </div>
                 </div>
                 <div class="actions" style="margin-top:12px;">
-                    <button type="submit">Save Fee Assessment</button>
+                    <button type="submit">{{ $editingFee ? 'Update Fee Assessment' : 'Save Fee Assessment' }}</button>
                 </div>
             </form>
             @if(!empty($db['fees']) && count($db['fees']))
                 <div class="status-grid" style="grid-template-columns: 1fr 2fr; margin-top:10px;">
-                    <div class="label">Recent</div>
-                    <div class="value">₱ {{ number_format((float)($db['fees'][0]->total_amount ?? 0),2) }} @if(!empty($db['fees'][0]->or_no)) (OR: {{ $db['fees'][0]->or_no }}) @endif</div>
+                    <div class="label">History</div>
+                    <div class="value">
+                      <div class="fee-history">
+                        @foreach($db['fees'] as $fee)
+                          @php
+                              $isActive = (string)$currentFeeId === (string)$fee->id;
+                          @endphp
+                          <div class="fee-history__row" style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); {{ $loop->last ? 'border-bottom:none;' : '' }} {{ $isActive ? 'font-weight:600;' : '' }}">
+                            <div>PHP {{ number_format((float)($fee->total_amount ?? 0),2) }}
+                              @if(!empty($fee->or_no))
+                                <span style="margin-left:6px; color:#4b5563;">OR: {{ $fee->or_no }}</span>
+                              @endif
+                              <span style="margin-left:6px; color:#6b7280;">{{ optional($fee->created_at)->format('Y-m-d H:i') ?? 'n/a' }}</span>
+                              @if(!empty($fee->notes))
+                                <div style="color:#4b5563; font-size:0.85em;">{{ $fee->notes }}</div>
+                              @endif
+                            </div>
+                            <a class="secondary" href="{{ route('admin.app.show', ['trackingId'=>$tracking_id]) }}?edit_fee={{ $fee->id }}#fees">{{ $isActive ? 'Editing' : 'Edit' }}</a>
+                          </div>
+                        @endforeach
+                      </div>
+                    </div>
                 </div>
             @endif
         </div>
 
         <script>
+      const ADMIN_TRACKING_ID = @json($tracking_id);
+      window.ADMIN_TRACKING_ID = ADMIN_TRACKING_ID;
+      const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.content || '';
           (function(){
             const table = document.getElementById('feeItemsTable');
+            if (!table) { return; }
             const tbody = table.querySelector('tbody');
             const addBtn = document.getElementById('addFeeItem');
             const totalEl = document.getElementById('feeTotal');
             const hidden = document.getElementById('items_json');
             const form = document.getElementById('feeForm');
+            const preset = (function() {
+              if (hidden && hidden.value) {
+                try {
+                  const parsed = JSON.parse(hidden.value);
+                  if (Array.isArray(parsed) && parsed.length) {
+                    return parsed;
+                  }
+                } catch (e) {}
+              }
+              return @json($feeItemsPreset);
+            })();
 
             function addRow(label = '', amount = ''){
               const tr = document.createElement('tr');
@@ -181,26 +246,48 @@
                 <td style="padding:6px; border-top:1px solid var(--border); text-align:right;"><button type="button" class="secondary remove">Remove</button></td>
               `;
               tbody.appendChild(tr);
+              const labelInput = tr.querySelector('.fee-label');
+              const amountInput = tr.querySelector('.fee-amount');
               tr.querySelector('.remove').onclick = () => { tr.remove(); recompute(); };
-              tr.querySelector('.fee-amount').oninput = recompute;
+              if (labelInput) labelInput.addEventListener('input', recompute);
+              if (amountInput) amountInput.addEventListener('input', recompute);
             }
 
             function recompute(){
               const rows = Array.from(tbody.querySelectorAll('tr'));
               let total = 0; const items = [];
               rows.forEach(r => {
-                const label = r.querySelector('.fee-label').value.trim();
-                const amt = parseFloat(r.querySelector('.fee-amount').value || '0');
-                if (label || amt) { items.push({label, amount: amt}); total += (isNaN(amt)?0:amt); }
+                const label = (r.querySelector('.fee-label')?.value || '').trim();
+                const amtVal = r.querySelector('.fee-amount')?.value || '';
+                const amt = parseFloat(amtVal === '' ? '0' : amtVal);
+                if (label || (!isNaN(amt) && amt !== 0)) {
+                    items.push({ label, amount: isNaN(amt) ? 0 : amt });
+                }
+                if (!isNaN(amt)) {
+                    total += amt;
+                }
               });
-              if (totalEl) totalEl.value = total.toFixed(2);
-              if (hidden) hidden.value = JSON.stringify(items);
+              if (totalEl) {
+                totalEl.value = total.toFixed(2);
+              }
+              if (hidden) {
+                hidden.value = JSON.stringify(items);
+              }
             }
 
             if (addBtn) addBtn.onclick = () => { addRow(); };
             if (form) form.addEventListener('submit', () => { recompute(); });
-            // start with one row
-            addRow();
+
+            if (Array.isArray(preset) && preset.length) {
+              preset.forEach(item => {
+                const label = typeof item?.label === 'string' ? item.label : '';
+                const amount = item && typeof item.amount !== 'undefined' ? item.amount : '';
+                addRow(label, amount);
+              });
+              recompute();
+            } else {
+              addRow();
+            }
           })();
         </script>
 
@@ -338,11 +425,15 @@
             <h3 style="margin-top:0;">Form Fields</h3>
             <div class="status-grid">
                 @php
-                    $keys = count($placeholders) ? $placeholders : array_keys($form ?? []);
+                    $keys = $formDisplayKeys ?? (count($placeholders) ? $placeholders : array_keys($form ?? []));
                 @endphp
                 @forelse($keys as $k)
-                    <div class="label">{{ Str::of($k)->replaceMatches('/([A-Z])/', ' $1')->replace('_',' ')->ucfirst() }}</div>
-                    <div class="value">{{ $form[$k] ?? '' }}</div>
+                    @php
+                        $label = Str::of($k)->replaceMatches('/([A-Z])/', ' $1')->replace('_', ' ')->ucfirst();
+                        $value = $formDisplayValues[$k] ?? ($form[$k] ?? '');
+                    @endphp
+                    <div class="label">{{ $label }}</div>
+                    <div class="value">{{ $value }}</div>
                 @empty
                     <div>No data yet.</div>
                 @endforelse
@@ -356,9 +447,18 @@
                 <button type="button" onclick="adminDownloadDoc()">Download Filled .docx</button>
                 <button type="button" onclick="adminTriggerPermit()">Upload Final Permit (.docx)</button>
             </div>
-            <ul>
+            <ul class="admin-files-list">
                 @forelse(($admin_files ?? []) as $f)
-                    <li><a href="{{ $f['url'] }}" target="_blank">{{ $f['name'] }}</a> ({{ round(($f['size'] ?? 0)/1024) }} KB)</li>
+                    <li class="admin-files-list__item">
+                        <div class="admin-file__info">
+                            <a href="{{ $f['url'] }}" target="_blank">{{ $f['name'] }}</a>
+                            <span class="admin-file__meta">({{ round(($f['size'] ?? 0)/1024) }} KB)</span>
+                        </div>
+                        <div class="admin-file__actions">
+                            <button type="button" data-file="{{ $f['name'] }}" onclick="adminRenameFile(this.dataset.file)">Rename</button>
+                            <button type="button" data-file="{{ $f['name'] }}" onclick="adminDeleteFile(this.dataset.file)">Delete</button>
+                        </div>
+                    </li>
                 @empty
                     <li>No admin files yet.</li>
                 @endforelse
@@ -395,15 +495,67 @@
         const fd = new FormData();
         fd.append('tracking_id', @json($tracking_id));
         Array.from(files).forEach(f => fd.append('files[]', f));
-        const res = await fetch('/api/application/admin-files/upload', { method:'POST', body: fd });
+        const res = await fetch('/api/application/admin-files/upload', { method:'POST', body: fd, credentials:'same-origin' });
         if(!res.ok){ alert('Upload failed'); return; }
         location.reload();
       }
+
+      async function adminRenameFile(name){
+        const current = typeof name === 'string' ? name : '';
+        const proposed = prompt('Enter new file name', current);
+        if (proposed === null) { return; }
+        const trimmed = proposed.trim();
+        if (!trimmed || trimmed === current) { return; }
+        try {
+          const res = await fetch('/api/application/admin-files/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF_TOKEN },
+            credentials: 'same-origin',
+            body: JSON.stringify({ tracking_id: ADMIN_TRACKING_ID, name: current, new_name: trimmed })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            alert(data.message || 'Rename failed');
+            return;
+          }
+          location.reload();
+        } catch (err) {
+          console.error(err);
+          alert('Rename failed');
+        }
+      }
+
+      async function adminDeleteFile(name){
+        if (!name) { return; }
+        if (!confirm('Delete ' + name + '?')) { return; }
+        try {
+          const res = await fetch('/api/application/admin-files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': CSRF_TOKEN },
+            credentials: 'same-origin',
+            body: JSON.stringify({ tracking_id: ADMIN_TRACKING_ID, name })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            alert(data.message || 'Delete failed');
+            return;
+          }
+          location.reload();
+        } catch (err) {
+          console.error(err);
+          alert('Delete failed');
+        }
+      }
       async function adminDownloadDoc(){
-        const data = @json($form ?? []);
-        if(!data || Object.keys(data).length===0){ alert('No form data to generate.'); return; }
+        const formData = @json($form ?? []);
+        const payload = {
+          ...formData,
+          tracking_id: @json($tracking_id),
+          trackingId: @json($tracking_id),
+        };
+        if(!payload || Object.keys(payload).length===0){ alert('No form data to generate.'); return; }
         const res = await fetch('/api/application/generate-doc', {
-          method:'POST', headers:{ 'Content-Type':'application/json', 'Accept':'application/octet-stream' }, body: JSON.stringify(data)
+          method:'POST', headers:{ 'Content-Type':'application/json', 'Accept':'application/octet-stream' }, body: JSON.stringify(payload)
         });
         if(!res.ok){ alert('Failed to generate document'); return; }
         const blob = await res.blob();
@@ -426,7 +578,7 @@
         const fd = new FormData();
         fd.append('tracking_id', @json($tracking_id));
         fd.append('permit', f);
-        const res = await fetch('/api/application/permit/upload', { method:'POST', body: fd });
+        const res = await fetch('/api/application/permit/upload', { method:'POST', body: fd, credentials:'same-origin' });
         const ok = res.ok; let msg = 'Uploaded';
         try{ const j = await res.json(); if(j?.message) msg=j.message; }catch(_){ }
         if(!ok){ alert(msg || 'Upload failed'); return; }
@@ -501,3 +653,12 @@
     </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+

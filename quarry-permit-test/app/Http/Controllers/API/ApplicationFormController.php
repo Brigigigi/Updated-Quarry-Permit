@@ -5,8 +5,16 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use App\Support\FormFieldResolver;
+use Illuminate\Support\Facades\Log;
 use ZipArchive;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Arr;
+use chillerlan\QRCode\QRCode;
+use chillerlan\QRCode\QROptions;
+use PhpOffice\PhpWord\Shared\Converter;
 
 class ApplicationFormController extends Controller
 {
@@ -212,19 +220,39 @@ class ApplicationFormController extends Controller
 
         $tp = new \PhpOffice\PhpWord\TemplateProcessor($templatePath);
 
+        $qrTempPath = null;
+
+        $qrImagePlaceholders = ['qrCode', 'qr_code', 'qrCodeImage', 'qr_code_image'];
+        $qrTextPlaceholders = ['qrCodeText', 'qr_code_text'];
+        $qrSummaryPlaceholders = array_merge($qrTextPlaceholders, ['qrSummary', 'qr_summary', 'qrInfo', 'qr_info']);
+        $qrHeadingPlaceholders = ['qrHeading', 'qr_heading', 'qrTitle', 'qr_title'];
+        $qrSpecialPlaceholders = array_merge($qrImagePlaceholders, $qrSummaryPlaceholders, $qrHeadingPlaceholders);
+
+
         // Prefer variables declared in the template itself
         $templateVars = method_exists($tp, 'getVariables') ? $tp->getVariables() : [];
         if (is_array($templateVars) && !empty($templateVars)) {
             foreach ($templateVars as $key) {
-                $value = isset($data[$key]) ? (string)$data[$key] : '';
-                $tp->setValue($key, $value);
+                if (in_array($key, $qrSpecialPlaceholders, true)) {
+                    continue;
+                }
+                $value = FormFieldResolver::value($data, $key, '');
+                if (is_array($value) || is_object($value)) {
+                    $value = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+                $tp->setValue($key, (string) $value);
             }
         } else {
-        foreach ($placeholders as $key) {
-            $value = isset($data[$key]) ? (string)$data[$key] : '';
-            // Template placeholders should be like ${key}
-            $tp->setValue($key, $value);
-        }
+            foreach ($placeholders as $key) {
+                if (in_array($key, $qrSpecialPlaceholders, true)) {
+                    continue;
+                }
+                $value = FormFieldResolver::value($data, $key, '');
+                if (is_array($value) || is_object($value)) {
+                    $value = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+                $tp->setValue($key, (string) $value);
+            }
         }
 
         $outName = 'mgbform8-1A-filled-'.Str::uuid().'.docx';
@@ -234,7 +262,210 @@ class ApplicationFormController extends Controller
             @mkdir(storage_path('app'), 0775, true);
         }
 
+
+        try {
+            // Attempt to include a QR code image if the template provides a placeholder
+            $trackingIdFromRequest = FormFieldResolver::value($data, 'tracking_id') ?: null;
+            Log::info('generateDoc payload', ['tracking' => $trackingIdFromRequest, 'keys' => array_keys($data)]);
+            $qrPayload = [
+                'tracking_id' => $trackingIdFromRequest,
+                'applicant_name' => FormFieldResolver::value($data, 'applicant_name') ?: null,
+                'municipality' => FormFieldResolver::value($data, 'municipality') ?: null,
+                'province' => FormFieldResolver::value($data, 'province') ?: null,
+                'generated_at' => now()->toIso8601String(),
+            ];
+
+            try {
+                if ($trackingIdFromRequest && Schema::hasTable('permit_application')) {
+                    $permitApplication = DB::table('permit_application')->where('tracking_id', $trackingIdFromRequest)->first();
+                    if ($permitApplication) {
+                        $qrPayload['application_id'] = $permitApplication->id ?? null;
+                        $qrPayload['status'] = $permitApplication->status ?? null;
+
+                        if (Schema::hasTable('permit')) {
+                            $permitRow = DB::table('permit')->where('application_id', $permitApplication->id)->first();
+                            if ($permitRow) {
+                                $qrPayload['permit_no'] = $permitRow->permit_no ?? null;
+                                $qrPayload['term_start'] = $permitRow->term_start ?? null;
+                                $qrPayload['term_end'] = $permitRow->term_end ?? null;
+                                $qrPayload['qr_hash'] = $permitRow->qr_hash ?? null;
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $inner) {
+                // continue with whatever data we have
+            }
+
+            $qrPayload = array_filter($qrPayload, static function ($value) {
+                return !is_null($value) && $value !== '';
+            });
+
+            if (!empty($qrPayload)) {
+                $templateVarsList = is_array($templateVars) ? $templateVars : [];
+
+                $signature = null;
+                $verifyUrl = null;
+                $statusData = [];
+                $paid = false;
+                $granted = false;
+
+                if ($trackingIdFromRequest) {
+                    $signature = hash_hmac('sha256', $trackingIdFromRequest, config('app.key'));
+                    $verifyUrl = url('/permit/verify?tracking=' . urlencode($trackingIdFromRequest) . '&sig=' . $signature);
+                    $qrPayload['signature'] = $signature;
+                    $qrPayload['verify_url'] = $verifyUrl;
+
+                    $safeTracking = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingIdFromRequest);
+                    $statusPath = storage_path('app/applications/'.$safeTracking.'/status.json');
+                    if (is_file($statusPath)) {
+                        $statusData = json_decode(@file_get_contents($statusPath), true) ?: [];
+                    }
+
+                    $paid = (bool) Arr::get($statusData, 'paid', false);
+                    $granted = (bool) Arr::get($statusData, 'permit_available', false);
+                }
+
+                if (!$paid && isset($permitApplication) && $permitApplication && Schema::hasTable('payment')) {
+                    $latestPayment = DB::table('payment')->where('application_id', $permitApplication->id)->orderByDesc('paid_at')->first();
+                    if ($latestPayment) {
+                        $paid = true;
+                    }
+                }
+
+                if (!$granted && isset($permitRow) && $permitRow) {
+                    $grantedStatus = strtolower((string) ($permitRow->status ?? ''));
+                    $granted = in_array($grantedStatus, ['active','suspended','expired'], true);
+                }
+
+                $qrPayload['paid'] = $paid;
+                $qrPayload['granted'] = $granted;
+
+                $summaryLines = [];
+                $summaryLines[] = 'Verification of Permit';
+                if ($trackingIdFromRequest) {
+                    $summaryLines[] = 'Tracking ID: ' . $trackingIdFromRequest;
+                }
+                if (!empty($qrPayload['permit_no'])) {
+                    $summaryLines[] = 'Permit No: ' . $qrPayload['permit_no'];
+                }
+                if (!empty($qrPayload['applicant_name'])) {
+                    $summaryLines[] = 'Applicant: ' . $qrPayload['applicant_name'];
+                }
+
+                $statusChunks = [];
+                $statusChunks[] = $paid ? 'Paid' : 'Unpaid';
+                $statusChunks[] = $granted ? 'Granted' : 'Not Granted';
+                $summaryLines[] = 'Status: ' . implode(' | ', array_filter($statusChunks));
+
+                if ($verifyUrl) {
+                    $summaryLines[] = 'Verify: ' . $verifyUrl;
+                }
+
+                $qrContent = implode("
+", array_filter($summaryLines));
+                if ($qrContent === '') {
+                    $qrContent = json_encode($qrPayload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                }
+
+                $imagePlaceholder = null;
+                $summaryPlaceholder = null;
+                foreach ($qrSummaryPlaceholders as $candidate) {
+                    if (in_array($candidate, $templateVarsList, true)) {
+                        $summaryPlaceholder = $candidate;
+                        break;
+                    }
+                }
+
+                $headingPlaceholder = null;
+                foreach ($qrHeadingPlaceholders as $candidate) {
+                    if (in_array($candidate, $templateVarsList, true)) {
+                        $headingPlaceholder = $candidate;
+                        break;
+                    }
+                }
+
+                if ($headingPlaceholder) {
+                    $tp->setValue($headingPlaceholder, 'Verification of Permit');
+                }
+
+                if ($summaryPlaceholder) {
+                    $tp->setValue($summaryPlaceholder, $qrContent);
+                }
+                foreach ($qrImagePlaceholders as $candidate) {
+                    if (in_array($candidate, $templateVarsList, true)) {
+                        $imagePlaceholder = $candidate;
+                        break;
+                    }
+                }
+                if (!$imagePlaceholder) {
+                    $imagePlaceholder = 'qrCode';
+                }
+
+                $textPlaceholder = null;
+                foreach ($qrTextPlaceholders as $candidate) {
+                    if (in_array($candidate, $templateVarsList, true)) {
+                        $textPlaceholder = $candidate;
+                        break;
+                    }
+                }
+
+                $imageEmbedded = false;
+                if ($imagePlaceholder && method_exists($tp, 'setImageValue') && extension_loaded('gd')) {
+                    try {
+                        $qrOptions = new QROptions([
+                            'outputType' => QRCode::OUTPUT_IMAGE_PNG,
+                            'eccLevel' => QRCode::ECC_Q,
+                            'scale' => 10,
+                            'outputBase64' => false,
+                        ]);
+
+                        $qrBinary = (new QRCode($qrOptions))->render($qrContent);
+                        if (is_string($qrBinary) && str_starts_with($qrBinary, 'data:image')) {
+                            $commaPos = strpos($qrBinary, ',');
+                            if ($commaPos !== false) {
+                                $qrBinary = base64_decode(substr($qrBinary, $commaPos + 1));
+                            }
+                        }
+
+                        $qrTempPath = storage_path('app/qr-' . Str::uuid() . '.png');
+                        @file_put_contents($qrTempPath, $qrBinary);
+
+                        if (file_exists($qrTempPath)) {
+                            $sizePx = Converter::cmToPixel(7);
+                            $tp->setImageValue($imagePlaceholder, [
+                                'path' => $qrTempPath,
+                                'width' => $sizePx,
+                                'height' => $sizePx,
+                                'ratio' => true,
+                            ]);
+                            $imageEmbedded = true;
+                        }
+                    } catch (\Throwable $imgEx) {
+                        Log::info('generateDoc QR image embed failed', ['placeholder' => $imagePlaceholder, 'error' => $imgEx->getMessage()]);
+                    }
+                }
+
+                if (!$imageEmbedded) {
+                    if ($summaryPlaceholder) {
+                        // Summary already rendered in template
+                    } elseif ($textPlaceholder) {
+                        $tp->setValue($textPlaceholder, $qrContent);
+                    } else {
+                        $tp->setValue($imagePlaceholder, '');
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('generateDoc QR generation failed', ['error' => $e->getMessage()]);
+            // QR generation is best-effort; continue without blocking document output
+        }
+
         $tp->saveAs($outPath);
+
+        if ($qrTempPath && file_exists($qrTempPath)) {
+            @unlink($qrTempPath);
+        }
 
         return response()->download($outPath, 'mgbform8-1A-filled.docx')->deleteFileAfterSend(true);
     }
@@ -506,6 +737,82 @@ class ApplicationFormController extends Controller
         return response()->download($full, $safeName);
     }
 
+    public function renameAdminFile(Request $request)
+    {
+        Log::info('admin rename request', ['payload' => $request->all()]);
+        $trackingId = (string) $request->input('tracking_id');
+        $name = (string) $request->input('name');
+        $newName = trim((string) $request->input('new_name'));
+        if(!$trackingId || !$name || $newName === '') {
+            return response()->json(['message' => 'tracking_id, name and new_name are required'], 400);
+        }
+        if (str_contains($name, '/') || str_contains($name, '\\')) {
+            return response()->json(['message' => 'Invalid file name'], 400);
+        }
+        if (str_contains($newName, '/') || str_contains($newName, '\\')) {
+            return response()->json(['message' => 'Invalid new file name'], 400);
+        }
+
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $dir = 'admin_uploads/'.$safe;
+        $disk = Storage::disk('public');
+        $currentPath = $dir.'/'.$name;
+        if (!$disk->exists($currentPath)) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
+
+        $ext = pathinfo($name, PATHINFO_EXTENSION);
+        $cleanNew = $newName;
+        if ($ext && !pathinfo($cleanNew, PATHINFO_EXTENSION)) {
+            $cleanNew .= '.'.$ext;
+        }
+        $cleanNew = preg_replace('/[^A-Za-z0-9._-]/', '_', $cleanNew);
+        if ($cleanNew === '') {
+            $cleanNew = 'file'.($ext ? '.'.$ext : '');
+        }
+        if ($cleanNew === $name) {
+            return response()->json(['message' => 'File name unchanged', 'name' => $name]);
+        }
+
+        $targetPath = $dir.'/'.$cleanNew;
+        if ($disk->exists($targetPath)) {
+            return response()->json(['message' => 'A file with that name already exists'], 409);
+        }
+
+        $disk->move($currentPath, $targetPath);
+        $full = storage_path('app/public/'.$targetPath);
+        $payload = [
+            'name' => $cleanNew,
+            'path' => $targetPath,
+            'size' => is_file($full) ? filesize($full) : 0,
+            'url' => url('/api/application/admin-files/download?tracking_id='.$safe.'&name='.rawurlencode($cleanNew)),
+        ];
+
+        return response()->json(['message' => 'File renamed', 'file' => $payload]);
+    }
+
+    public function deleteAdminFile(Request $request)
+    {
+        Log::info('admin delete request', ['payload' => $request->all()]);
+        $trackingId = (string) $request->input('tracking_id');
+        $name = (string) $request->input('name');
+        if(!$trackingId || !$name) {
+            return response()->json(['message' => 'tracking_id and name are required'], 400);
+        }
+        if (str_contains($name, '/') || str_contains($name, '\\')) {
+            return response()->json(['message' => 'Invalid file name'], 400);
+        }
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
+        $pathRel = 'admin_uploads/'.$safe.'/'.$name;
+        $disk = Storage::disk('public');
+        if (!$disk->exists($pathRel)) {
+            return response()->json(['message' => 'File not found'], 404);
+        }
+        $disk->delete($pathRel);
+
+        return response()->json(['message' => 'File deleted']);
+    }
+
     public function status(Request $request)
     {
         $trackingId = $request->query('tracking_id');
@@ -758,3 +1065,6 @@ class ApplicationFormController extends Controller
         return response()->download($full, $downloadName);
     }
 }
+
+
+

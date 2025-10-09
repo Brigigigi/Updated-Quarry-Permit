@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Models\PermitApplication;
 use App\Models\Bond;
+use App\Models\FeeAssessment;
 use App\Models\BoardAction;
 use App\Models\Permit;
+use App\Support\FormFieldResolver;
 use Carbon\Carbon;
 
 
@@ -285,7 +287,7 @@ class AdminApplicationController extends Controller
         return view('admin.home', ['apps' => $items]);
     }
 
-    public function show(string $trackingId)
+    public function show(Request $request, string $trackingId)
     {
         $safe = preg_replace('/[^A-Za-z0-9_\-]/','_', $trackingId);
         $dir = storage_path('app/applications/'.$safe);
@@ -306,6 +308,18 @@ class AdminApplicationController extends Controller
         }
 
         $placeholders = $this->getPlaceholders();
+        $formDisplayKeys = count($placeholders) ? $placeholders : array_keys($form);
+        $formDisplayKeys = array_values(array_unique($formDisplayKeys));
+        $formDisplayValues = FormFieldResolver::map($form, $formDisplayKeys);
+        if (count($placeholders)) {
+            foreach (array_keys($form) as $formKey) {
+                if (!in_array($formKey, $formDisplayKeys, true)) {
+                    $formDisplayKeys[] = $formKey;
+                    $formDisplayValues[$formKey] = FormFieldResolver::value($form, $formKey, '');
+                }
+            }
+        }
+
         $expected = max(1, count($placeholders));
         $filled = 0;
         foreach ($placeholders as $k) {
@@ -392,6 +406,24 @@ class AdminApplicationController extends Controller
         $totalItems = 3 /*checks*/ + 5 /*signers*/;
         $autoPercent = (int) round((($checksCount + $signCount) / max(1, $totalItems)) * 100);
 
+        $dbSummaries = $this->loadDbSummaries($trackingId);
+
+        $appId = null;
+        if (Schema::hasTable('permit_application')) {
+            $row = DB::table('permit_application')->where('tracking_id', $trackingId)->first();
+            if ($row) {
+                $appId = (int) $row->id;
+            }
+        }
+
+        $editFee = null;
+        if ($appId && $request->filled('edit_fee')) {
+            $feeId = (int) $request->query('edit_fee');
+            if ($feeId > 0) {
+                $editFee = FeeAssessment::where('application_id', $appId)->where('id', $feeId)->first();
+            }
+        }
+
         return view('admin.app', [
             'tracking_id' => $trackingId,
             'created_at' => $createdAt,
@@ -402,8 +434,11 @@ class AdminApplicationController extends Controller
             'files' => $files,
             'admin_files' => $adminFiles,
             'adminStatus' => $adminStatus,
+            'formDisplayKeys' => $formDisplayKeys,
+            'formDisplayValues' => $formDisplayValues,
             // DB-backed summaries (if tables exist)
-            'db' => $this->loadDbSummaries($trackingId),
+            'db' => $dbSummaries,
+            'editFee' => $editFee,
         ]);
     }
 
@@ -656,11 +691,33 @@ class AdminApplicationController extends Controller
             'total_amount' => 'required|numeric|min:0',
         ]);
         $appId = $this->ensurePermitAppId($trackingId);
-        if (!$appId) return back()->withErrors(['fees' => 'Database not ready.']);
+        if (!$appId) {
+            return back()->withErrors(['fees' => 'Database not ready.'])->withInput();
+        }
         $items = $request->input('items_json');
-        if (is_string($items)) { $decoded = json_decode($items, true); $items = is_array($decoded) ? $decoded : []; }
-        elseif (!is_array($items)) { $items = []; }
-        \App\Models\FeeAssessment::create([
+        if (is_string($items)) {
+            $decoded = json_decode($items, true);
+            $items = is_array($decoded) ? $decoded : [];
+        } elseif (!is_array($items)) {
+            $items = [];
+        }
+
+        $feeId = (int) $request->input('fee_id');
+        if ($feeId > 0) {
+            $fee = FeeAssessment::where('application_id', $appId)->where('id', $feeId)->first();
+            if (!$fee) {
+                return back()->withErrors(['fees' => 'Selected fee assessment was not found.'])->withInput();
+            }
+            $fee->items_json = $items;
+            $fee->total_amount = $request->input('total_amount');
+            $fee->or_no = $request->input('or_no');
+            $fee->notes = $request->input('notes');
+            $fee->save();
+            DB::table('permit_application')->where('id', $appId)->update(['status' => 'fees_bond', 'updated_at' => now()]);
+            return redirect()->to(route('admin.app.show', ['trackingId' => $trackingId]) . '#fees')->with('status', 'Fee assessment updated');
+        }
+
+        FeeAssessment::create([
             'application_id' => $appId,
             'items_json' => $items,
             'total_amount' => $request->input('total_amount'),
@@ -669,8 +726,8 @@ class AdminApplicationController extends Controller
             'created_by' => null,
             'created_at' => now(),
         ]);
-        DB::table('permit_application')->where('id',$appId)->update(['status'=>'fees_bond','updated_at'=>now()]);
-        return back()->with('status','Fee assessment saved');
+        DB::table('permit_application')->where('id', $appId)->update(['status' => 'fees_bond', 'updated_at' => now()]);
+        return redirect()->to(route('admin.app.show', ['trackingId' => $trackingId]) . '#fees')->with('status', 'Fee assessment saved');
     }
 
     public function addInspection(Request $request, string $trackingId)

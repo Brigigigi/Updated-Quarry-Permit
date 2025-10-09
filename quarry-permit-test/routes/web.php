@@ -15,8 +15,11 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Web\AdminAuthController;
 use App\Http\Controllers\Web\AdminApplicationController;
+use App\Http\Controllers\PermitVerificationController;
 
 // Landing page serves the SPA index
+Route::get('/permit/verify', [PermitVerificationController::class, 'show'])->name('permit.verify');
+
 Route::get('/', function () {
     return response()->file(public_path('index.html'));
 });

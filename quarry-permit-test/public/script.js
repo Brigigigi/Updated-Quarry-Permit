@@ -259,28 +259,52 @@ function showForm() {
 
 // Application form (async so we can await placeholders/tracking)
 async function showApplicationForm() {
-  const role = sessionStorage.getItem('currentRole');
   if (isOnMenuView()) {
-    // Prepare form then load into modal
-    try {
-      await ensureTrackingId();
-      await ensurePlaceholders(true);
-      buildApplicationForm(window.APP_PLACEHOLDERS || []);
-      loadApplication();
-    } catch(err){ console.error(err); }
-    openProcessModal('formApplicationUser', 'Application Form');
-    showTrackingWarning();
+    openProcessModal('formChoicePanel', 'Application Form');
     return;
   }
 
-  // Non-landing fallback
-  togglePages('formApplicationUser');
   try {
     await ensureTrackingId();
+    await openApplicationFormPanel();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function openApplicationFormPanel() {
+  try {
     await ensurePlaceholders(true);
     buildApplicationForm(window.APP_PLACEHOLDERS || []);
     loadApplication();
-    showTrackingWarning();
+  } catch (err) {
+    console.error(err);
+  }
+
+  if (isOnMenuView()) {
+    openProcessModal('formApplicationUser', 'Application Form');
+  } else {
+    togglePages('formApplicationUser');
+  }
+
+  showTrackingWarning();
+}
+
+async function handleContinueApplication() {
+  try {
+    await ensureTrackingId();
+    await openApplicationFormPanel();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function handleNewApplication() {
+  try {
+    sessionStorage.removeItem('tracking_id');
+    clearApplicationForm();
+    await ensureTrackingId();
+    await openApplicationFormPanel();
   } catch (err) {
     console.error(err);
   }
@@ -291,10 +315,10 @@ function showTrack() {
   if (isOnMenuView()) { openProcessModal('trackPage', 'Track Application'); }
   else { togglePages('trackPage'); }
 
-  const tid = sessionStorage.getItem('tracking_id') || '';
   const input = document.getElementById('trackIdInput');
-  if (tid && input && !input.value) input.value = tid;
-  if (input && input.value.trim()) { checkStatus(); }
+  if (input) {
+    input.value = '';
+  }
 }
 
 // ---------- Process Modal (moves sections into a wide modal) ----------
@@ -1248,9 +1272,10 @@ function closeTrackingWarning(){
 }
 
 // ------------------- Tracking Status -------------------
-async function checkStatus(){
+async function checkStatus(trackingIdOverride){
     const input = document.getElementById('trackIdInput');
-    const tracking_id = (input?.value || '').trim();
+    const rawId = trackingIdOverride != null ? String(trackingIdOverride) : (input?.value || '');
+    const tracking_id = rawId.trim();
     if(!tracking_id){ alert('Enter a tracking ID'); return; }
 
     const res = await safeFetch(`/api/application/status?tracking_id=${encodeURIComponent(tracking_id)}`);
@@ -1433,12 +1458,8 @@ window.addEventListener('DOMContentLoaded', async function() {
                 window.history.replaceState({}, document.title, window.location.pathname);
 
                 // Auto-check status if on track page
-                const trackIdInput = document.getElementById('trackIdInput');
-                if (trackIdInput) {
-                    trackIdInput.value = trackingId;
-                    showTrack();
-                    setTimeout(() => checkStatus(), 500);
-                }
+                showTrack();
+                setTimeout(() => checkStatus(trackingId), 500);
             }
         } catch (err) {
             console.error('Payment verification error:', err);
